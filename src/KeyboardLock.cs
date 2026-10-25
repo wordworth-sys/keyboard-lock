@@ -1,162 +1,16 @@
-// KeyboardLock — 临时锁住键盘，鼠标与滚轮完全不受影响。
-// MIT License · https://github.com/wordworth-sys/keyboard-lock
-//
-// 实现要点：
-//   1. 只安装 WH_KEYBOARD_LL 低层键盘钩子，从不碰鼠标。
-//   2. 快捷键按“虚拟键码”匹配，而不是按字符匹配，避免 Ctrl/Alt 组合被
-//      键盘布局转换吃掉（这正是 Keylock v1.0.0 失效的原因）。
-//   3. 锁定期间：非修饰键按下/抬起全部吞掉；修饰键只吞按下、放行抬起。
-//      放行抬起是关键——锁定瞬间 Ctrl/Alt 的按下已经被系统接收，若连抬起
-//      也吞掉，系统会一直认为 Ctrl 处于按下状态，滚轮就变成 Ctrl+滚轮。
-//   4. 快捷键按住不放（自动重复）只触发一次。
-//   5. 关闭窗口只收进托盘，必须从托盘菜单「退出」才真正结束进程。
-
 using System;
 using System.Diagnostics;
 using System.Drawing;
-using System.Drawing.Drawing2D;
+using System.IO;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
-#region 绘制辅助
-
-internal static class Round
-{
-    public static GraphicsPath Path(Rectangle r, int radius)
-    {
-        GraphicsPath p = new GraphicsPath();
-        int d = Math.Max(2, radius * 2);
-        if (d >= r.Width) d = r.Width - 1;
-        if (d >= r.Height) d = r.Height - 1;
-
-        p.AddArc(r.X, r.Y, d, d, 180, 90);
-        p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-        p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-        p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-        p.CloseFigure();
-        return p;
-    }
-}
-
-internal sealed class StatusPill : Control
-{
-    public Color Fill = Color.White;
-    public Color Ink = Color.Black;
-    public int Radius = 10;
-
-    public StatusPill()
-    {
-        SetStyle(
-            ControlStyles.UserPaint |
-            ControlStyles.AllPaintingInWmPaint |
-            ControlStyles.OptimizedDoubleBuffer |
-            ControlStyles.ResizeRedraw |
-            ControlStyles.SupportsTransparentBackColor,
-            true);
-        BackColor = Color.Transparent;
-        DoubleBuffered = true;
-    }
-
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-
-        Rectangle r = new Rectangle(0, 0, Width - 1, Height - 1);
-        using (GraphicsPath p = Round.Path(r, Radius))
-        using (SolidBrush b = new SolidBrush(Fill))
-        {
-            e.Graphics.FillPath(b, p);
-        }
-
-        TextRenderer.DrawText(
-            e.Graphics, Text, Font, r, Ink,
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
-            TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
-    }
-}
-
-internal sealed class RoundButton : Button
-{
-    public Color NormalBack = Color.Black;
-    public Color HoverBack = Color.Black;
-    public Color PressBack = Color.Black;
-    public Color Ink = Color.White;
-    public int Radius = 12;
-
-    private bool hover;
-    private bool pressed;
-
-    public RoundButton()
-    {
-        SetStyle(
-            ControlStyles.UserPaint |
-            ControlStyles.AllPaintingInWmPaint |
-            ControlStyles.OptimizedDoubleBuffer |
-            ControlStyles.ResizeRedraw,
-            true);
-        FlatStyle = FlatStyle.Flat;
-        FlatAppearance.BorderSize = 0;
-        UseVisualStyleBackColor = false;
-        Cursor = Cursors.Hand;
-        TabStop = false;
-        DoubleBuffered = true;
-    }
-
-    protected override void OnMouseEnter(EventArgs e)
-    {
-        hover = true;
-        Invalidate();
-        base.OnMouseEnter(e);
-    }
-
-    protected override void OnMouseLeave(EventArgs e)
-    {
-        hover = false;
-        pressed = false;
-        Invalidate();
-        base.OnMouseLeave(e);
-    }
-
-    protected override void OnMouseDown(MouseEventArgs mevent)
-    {
-        pressed = true;
-        Invalidate();
-        base.OnMouseDown(mevent);
-    }
-
-    protected override void OnMouseUp(MouseEventArgs mevent)
-    {
-        pressed = false;
-        Invalidate();
-        base.OnMouseUp(mevent);
-    }
-
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        e.Graphics.Clear(BackColor);
-
-        Color back = !Enabled ? Color.FromArgb(0xD8, 0xD4, 0xCD)
-                   : pressed ? PressBack
-                   : hover ? HoverBack
-                   : NormalBack;
-
-        Rectangle r = new Rectangle(0, 0, Width - 1, Height - 1);
-        using (GraphicsPath p = Round.Path(r, Radius))
-        using (SolidBrush b = new SolidBrush(back))
-        {
-            e.Graphics.FillPath(b, p);
-        }
-
-        TextRenderer.DrawText(
-            e.Graphics, Text, Font, r, Enabled ? Ink : Color.FromArgb(0x9A, 0x95, 0x8E),
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
-            TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
-    }
-}
-
-#endregion
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.WinForms;
 
 public class KeyboardLockForm : Form
 {
@@ -167,10 +21,13 @@ public class KeyboardLockForm : Form
     private const int WM_SYSKEYDOWN = 0x0104;
     private const int WM_SYSKEYUP = 0x0105;
 
-    // 进程间通信用：第二个实例唤起已有窗口 / 自动化测试用
+    private const int WM_NCLBUTTONDOWN = 0xA1;
+    private const int HTCAPTION = 0x2;
+
     private const int WM_APP_SHOW = 0x8000 + 1;
     private const int WM_APP_EXIT = 0x8000 + 2;
 
+    private const int VK_LBUTTON = 0x01;
     private const int VK_SHIFT = 0x10;
     private const int VK_LSHIFT = 0xA0;
     private const int VK_RSHIFT = 0xA1;
@@ -187,25 +44,9 @@ public class KeyboardLockForm : Form
     private const uint SWP_NOSIZE = 0x0001;
     private const uint SWP_NOMOVE = 0x0002;
     private const uint SWP_NOACTIVATE = 0x0010;
-    private const int SW_RESTORE = 9;
 
     private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
     private static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
-
-    private static readonly Color BgColor = Color.FromArgb(0xFA, 0xF9, 0xF7);
-    private static readonly Color InkColor = Color.FromArgb(0x1F, 0x23, 0x28);
-    private static readonly Color MutedColor = Color.FromArgb(0x8A, 0x85, 0x7E);
-    private static readonly Color FaintColor = Color.FromArgb(0xAC, 0xA6, 0x9E);
-    private static readonly Color LineColor = Color.FromArgb(0xEC, 0xE7, 0xE0);
-    private static readonly Color OkFill = Color.FromArgb(0xEA, 0xF5, 0xEF);
-    private static readonly Color OkInk = Color.FromArgb(0x1E, 0x7A, 0x56);
-    private static readonly Color LockFill = Color.FromArgb(0xFD, 0xEC, 0xE9);
-    private static readonly Color LockInk = Color.FromArgb(0xC0, 0x39, 0x2B);
-    private static readonly Color AccentColor = Color.FromArgb(0xE8, 0x71, 0x2B);
-    private static readonly Color AccentHover = Color.FromArgb(0xF0, 0x81, 0x3D);
-    private static readonly Color AccentPress = Color.FromArgb(0xD4, 0x62, 0x20);
-    private static readonly Color InkHover = Color.FromArgb(0x33, 0x38, 0x3F);
-    private static readonly Color InkPress = Color.FromArgb(0x0F, 0x12, 0x16);
 
     private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
@@ -222,133 +63,89 @@ public class KeyboardLockForm : Form
     private static extern IntPtr GetModuleHandle(string lpModuleName);
 
     [DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
+
+    [DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
 
     [DllImport("user32.dll")]
-    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    private static extern short GetAsyncKeyState(int vKey);
 
-    [DllImport("user32.dll")]
-    private static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("gdi32.dll")]
+    private static extern IntPtr CreateRoundRectRgn(int nLeftRect, int nTopRect, int nRightRect, int nBottomRect, int nWidthEllipse, int nHeightEllipse);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern IntPtr FindWindowW(string lpClassName, string lpWindowName);
+    private static extern bool SetWindowTextW(IntPtr hWnd, string lpString);
 
     [DllImport("user32.dll")]
-    private static extern bool PostMessageW(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+    private static extern uint GetDpiForSystem();
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
 
     private static KeyboardLockForm current;
     private static IntPtr hookId = IntPtr.Zero;
     private static readonly LowLevelKeyboardProc hookProc = HookCallback;
 
-    // 修饰键状态由钩子自己维护：锁定期间按键被吞，操作系统的状态不可信。
     private static bool ctrlDown;
     private static bool altDown;
     private static bool uDown;
 
-    private bool locked;
-    private bool hookFailed;
+    private volatile bool isLocked;
     private bool reallyExit;
-    private bool tipShown;
-    private float scale = 1F;
+    private bool webReady;
 
+    private WebView2 webView;
     private NotifyIcon tray;
     private ContextMenuStrip trayMenu;
-    private ToolStripMenuItem mnuShow;
     private ToolStripMenuItem mnuToggle;
 
-    private StatusPill pill;
-    private RoundButton btnToggle;
-    private Label lblFoot1;
-    private Label lblFoot2;
-    private Label lblSub;
+    private System.Windows.Forms.Timer dragTimer;
+    private Point dragStartCursor;
+    private Point dragStartLocation;
 
     public KeyboardLockForm()
     {
         current = this;
 
-        // 窗口是 DPI 感知的，字体尺寸会自动按 DPI 换算，但硬编码的像素布局不会，
-        // 所以这里按当前 DPI 手动缩放所有控件位置。
         AutoScaleMode = AutoScaleMode.None;
-        scale = DpiScale();
-
         Text = "键盘锁";
-        ClientSize = new Size(Px(420), Px(296));
-        FormBorderStyle = FormBorderStyle.FixedSingle;
+        FormBorderStyle = FormBorderStyle.None;
         MaximizeBox = false;
+        MinimizeBox = true;
         StartPosition = FormStartPosition.CenterScreen;
-        BackColor = BgColor;
-        Font = new Font("Microsoft YaHei UI", 9F);
+        ShowInTaskbar = true;
+        BackColor = Color.FromArgb(0xD3, 0xD9, 0xE2);
 
+        float scale = GetSystemDpiScale();
+        int w = (int)Math.Round(400 * scale);
+        int h = (int)Math.Round(264 * scale);
+        Width = w;
+        Height = h;
+        ClientSize = new Size(w, h);
+
+        dragTimer = new System.Windows.Forms.Timer();
+        dragTimer.Interval = 8;
+        dragTimer.Tick += OnDragTick;
+
+        Shown += OnFormShown;
+    }
+
+    private static float GetSystemDpiScale()
+    {
         try
         {
-            Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            uint dpi = GetDpiForSystem();
+            if (dpi > 0)
+                return dpi / 96f;
         }
         catch
         {
-            // 取不到图标不影响功能
         }
-
-        PictureBox pic = new PictureBox();
-        pic.SetBounds(Px(28), Px(22), Px(44), Px(44));
-        pic.SizeMode = PictureBoxSizeMode.Zoom;
-        if (Icon != null)
-            pic.Image = new Icon(Icon, new Size(64, 64)).ToBitmap();
-        Controls.Add(pic);
-
-        Label lblTitle = new Label();
-        lblTitle.SetBounds(Px(84), Px(18), Px(310), Px(28));
-        lblTitle.Font = new Font("Microsoft YaHei UI", 15.5F, FontStyle.Bold);
-        lblTitle.ForeColor = InkColor;
-        lblTitle.Text = "键盘锁";
-        Controls.Add(lblTitle);
-
-        lblSub = new Label();
-        lblSub.SetBounds(Px(86), Px(48), Px(308), Px(20));
-        lblSub.Font = new Font("Microsoft YaHei UI", 9F);
-        lblSub.ForeColor = MutedColor;
-        lblSub.Text = "只锁键盘 · 鼠标与滚轮始终可用";
-        Controls.Add(lblSub);
-
-        Panel line = new Panel();
-        line.SetBounds(Px(28), Px(90), Px(364), 1);
-        line.BackColor = LineColor;
-        Controls.Add(line);
-
-        pill = new StatusPill();
-        pill.SetBounds(Px(28), Px(108), Px(364), Px(36));
-        pill.Radius = Px(10);
-        pill.Font = new Font("Microsoft YaHei UI", 10.5F, FontStyle.Bold);
-        Controls.Add(pill);
-
-        btnToggle = new RoundButton();
-        btnToggle.SetBounds(Px(28), Px(156), Px(364), Px(58));
-        btnToggle.Radius = Px(12);
-        btnToggle.Font = new Font("Microsoft YaHei UI", 11.5F, FontStyle.Bold);
-        // 按钮背景必须与窗口底色一致，否则圆角外侧会露出底色（Button 会先铺一层 BackColor）
-        btnToggle.BackColor = BgColor;
-        btnToggle.FlatAppearance.MouseOverBackColor = BgColor;
-        btnToggle.FlatAppearance.MouseDownBackColor = BgColor;
-        btnToggle.Click += delegate { Toggle(); };
-        Controls.Add(btnToggle);
-
-        lblFoot1 = new Label();
-        lblFoot1.SetBounds(Px(28), Px(230), Px(364), Px(18));
-        lblFoot1.Font = new Font("Microsoft YaHei UI", 9F);
-        lblFoot1.ForeColor = MutedColor;
-        lblFoot1.TextAlign = ContentAlignment.MiddleCenter;
-        lblFoot1.Text = "Ctrl + Alt + U  随时锁 / 解";
-        Controls.Add(lblFoot1);
-
-        lblFoot2 = new Label();
-        lblFoot2.SetBounds(Px(28), Px(250), Px(364), Px(18));
-        lblFoot2.Font = new Font("Microsoft YaHei UI", 8.5F);
-        lblFoot2.ForeColor = FaintColor;
-        lblFoot2.TextAlign = ContentAlignment.MiddleCenter;
-        lblFoot2.Text = "关闭窗口后仍在托盘运行 · 右键托盘图标可退出";
-        Controls.Add(lblFoot2);
-
-        CreateTray();
-        UpdateUi();
+        return 1f;
     }
 
     private void CreateTray()
@@ -356,14 +153,14 @@ public class KeyboardLockForm : Form
         trayMenu = new ContextMenuStrip();
         trayMenu.Font = new Font("Microsoft YaHei UI", 9F);
 
-        mnuShow = new ToolStripMenuItem("显示主窗口");
+        ToolStripMenuItem mnuShow = new ToolStripMenuItem("显示主界面");
         mnuShow.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
         mnuShow.Click += delegate { ShowFromTray(); };
 
-        mnuToggle = new ToolStripMenuItem("锁定键盘");
-        mnuToggle.Click += delegate { Toggle(); };
+        mnuToggle = new ToolStripMenuItem("锁定键盘 (Ctrl+Alt+U)");
+        mnuToggle.Click += delegate { ToggleLock(); };
 
-        ToolStripMenuItem mnuExit = new ToolStripMenuItem("退出");
+        ToolStripMenuItem mnuExit = new ToolStripMenuItem("完全退出");
         mnuExit.Click += delegate { ExitApp(); };
 
         trayMenu.Items.Add(mnuShow);
@@ -373,7 +170,7 @@ public class KeyboardLockForm : Form
 
         tray = new NotifyIcon();
         tray.Icon = Icon;
-        tray.Text = "键盘锁";
+        tray.Text = "键盘锁 · 未锁定";
         tray.ContextMenuStrip = trayMenu;
         tray.Visible = true;
         tray.DoubleClick += delegate { ShowFromTray(); };
@@ -384,36 +181,246 @@ public class KeyboardLockForm : Form
         };
     }
 
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            CreateParams cp = base.CreateParams;
+            cp.Parent = IntPtr.Zero;
+            cp.ExStyle |= 0x00040000; // WS_EX_APPWINDOW
+            return cp;
+        }
+    }
+
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
 
+        SetWindowTextW(Handle, Text);
+
+        float scale = GetSystemDpiScale();
+        int radius = (int)Math.Round(16 * scale);
+        Region = Region.FromHrgn(CreateRoundRectRgn(0, 0, Width + 1, Height + 1, radius * 2, radius * 2));
+
+        try
+        {
+            Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            int preference = 2; // DWMWCP_ROUND
+            DwmSetWindowAttribute(Handle, 33, ref preference, sizeof(int));
+        }
+        catch
+        {
+        }
+
+        InstallHook();
+    }
+
+    private async void OnFormShown(object sender, EventArgs e)
+    {
+        if (tray == null)
+        {
+            CreateTray();
+        }
+
+        try
+        {
+            if (webView == null)
+            {
+                webView = new WebView2();
+                webView.Dock = DockStyle.Fill;
+                webView.DefaultBackgroundColor = Color.Transparent;
+                webView.AllowExternalDrop = false;
+                Controls.Add(webView);
+            }
+
+            var localData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KeyboardLock");
+            Directory.CreateDirectory(localData);
+            var env = await CoreWebView2Environment.CreateAsync(null, localData);
+            await webView.EnsureCoreWebView2Async(env);
+            webView.DefaultBackgroundColor = Color.Transparent;
+
+            CoreWebView2Settings s = webView.CoreWebView2.Settings;
+            s.AreDefaultContextMenusEnabled = false;
+            s.AreDevToolsEnabled = false;
+            s.IsStatusBarEnabled = false;
+            s.IsZoomControlEnabled = false;
+
+            webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
+            webView.CoreWebView2.NavigationCompleted += delegate
+            {
+                webReady = true;
+                SyncStateToWeb();
+            };
+
+            webView.CoreWebView2.NavigateToString(LoadUiHtml());
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("WebView2 初始化失败：" + ex.Message, "键盘锁", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private static string LoadUiHtml()
+    {
+        string localFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ui.html");
+        if (File.Exists(localFile))
+        {
+            return File.ReadAllText(localFile, Encoding.UTF8);
+        }
+
+        Assembly asm = Assembly.GetExecutingAssembly();
+        using (Stream s = asm.GetManifestResourceStream("KeyboardLock.ui.html"))
+        {
+            if (s != null)
+            {
+                using (StreamReader r = new StreamReader(s, Encoding.UTF8))
+                    return r.ReadToEnd();
+            }
+        }
+        return "<html><body>UI missing</body></html>";
+    }
+
+    private void OnWebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)
+    {
+        string json = e.WebMessageAsJson;
+        if (string.IsNullOrEmpty(json))
+            return;
+
+        if (json.IndexOf("\"toggle\"", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            ToggleLock();
+        }
+        else if (json.IndexOf("\"hide\"", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            this.Hide();
+        }
+        else if (json.IndexOf("\"minimize\"", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            this.WindowState = FormWindowState.Minimized;
+        }
+        else if (json.IndexOf("\"drag\"", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            StartNativeDrag();
+        }
+    }
+
+    private void StartNativeDrag()
+    {
+        dragStartCursor = Cursor.Position;
+        dragStartLocation = this.Location;
+
+        ReleaseCapture();
+        SendMessage(this.Handle, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+
+        if ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0)
+        {
+            dragTimer.Start();
+        }
+    }
+
+    private void OnDragTick(object sender, EventArgs e)
+    {
+        if ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) == 0)
+        {
+            dragTimer.Stop();
+            return;
+        }
+
+        Point cur = Cursor.Position;
+        int nx = dragStartLocation.X + (cur.X - dragStartCursor.X);
+        int ny = dragStartLocation.Y + (cur.Y - dragStartCursor.Y);
+        if (Location.X != nx || Location.Y != ny)
+        {
+            Location = new Point(nx, ny);
+        }
+    }
+
+    private void InstallHook()
+    {
         if (hookId != IntPtr.Zero)
             return;
 
         IntPtr hMod = GetModuleHandle(Process.GetCurrentProcess().MainModule.ModuleName);
         hookId = SetWindowsHookEx(WH_KEYBOARD_LL, hookProc, hMod, 0);
+    }
 
-        if (hookId == IntPtr.Zero)
+    private void UninstallHook()
+    {
+        if (hookId != IntPtr.Zero)
         {
-            hookFailed = true;
-            btnToggle.Enabled = false;
-            pill.Text = "无法安装键盘钩子";
-            pill.Fill = LockFill;
-            pill.Ink = LockInk;
-            lblFoot1.Text = "错误码 " + Marshal.GetLastWin32Error();
-            lblFoot2.Text = "请重试，或换一台机器运行";
-            MessageBox.Show(
-                "键盘钩子安装失败（错误码 " + Marshal.GetLastWin32Error() + "），本程序无法锁定键盘。",
-                "键盘锁", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            UnhookWindowsHookEx(hookId);
+            hookId = IntPtr.Zero;
         }
+    }
+
+    private void ToggleLock()
+    {
+        isLocked = !isLocked;
+        OnLockStateChanged();
+    }
+
+    private void OnLockStateChanged()
+    {
+        Text = isLocked ? "键盘锁 — 已锁定" : "键盘锁";
+        if (IsHandleCreated)
+            SetWindowTextW(Handle, Text);
+
+        if (mnuToggle != null)
+            mnuToggle.Text = isLocked ? "解锁键盘 (Ctrl+Alt+U)" : "锁定键盘 (Ctrl+Alt+U)";
+        if (tray != null)
+            tray.Text = isLocked ? "键盘锁 · 已锁定" : "键盘锁 · 未锁定";
+
+        if (IsHandleCreated)
+        {
+            SetWindowPos(
+                Handle,
+                isLocked ? HWND_TOPMOST : HWND_NOTOPMOST,
+                0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+
+        SyncStateToWeb();
+    }
+
+    private void SyncStateToWeb()
+    {
+        if (!webReady || webView == null || webView.CoreWebView2 == null)
+            return;
+
+        try
+        {
+            webView.CoreWebView2.PostWebMessageAsJson("{\"locked\":" + (isLocked ? "true" : "false") + "}");
+        }
+        catch
+        {
+        }
+    }
+
+    private void ShowFromTray()
+    {
+        ShowInTaskbar = true;
+        this.Show();
+        this.WindowState = FormWindowState.Normal;
+        this.Activate();
+        this.BringToFront();
+        SyncStateToWeb();
+    }
+
+    private void ExitApp()
+    {
+        reallyExit = true;
+        this.Close();
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        // 用户点关闭（X）/ Alt+F4 时只收进托盘；只有托盘菜单「退出」或系统关机才真正结束。
-        // 注意不能只判断 CloseReason.UserClosing：外部投递的 WM_CLOSE 拿到的可能是
-        // CloseReason.None，那样会绕过收托盘逻辑直接把进程关掉。
         bool systemShutdown =
             e.CloseReason == CloseReason.WindowsShutDown ||
             e.CloseReason == CloseReason.TaskManagerClosing ||
@@ -422,16 +429,13 @@ public class KeyboardLockForm : Form
         if (!reallyExit && !systemShutdown)
         {
             e.Cancel = true;
-            HideToTray();
+            this.Hide();
             return;
         }
 
-        locked = false;
-        if (hookId != IntPtr.Zero)
-        {
-            UnhookWindowsHookEx(hookId);
-            hookId = IntPtr.Zero;
-        }
+        isLocked = false;
+        dragTimer.Stop();
+        UninstallHook();
 
         if (tray != null)
         {
@@ -458,162 +462,6 @@ public class KeyboardLockForm : Form
         }
 
         base.WndProc(ref m);
-    }
-
-    private void HideToTray()
-    {
-        ShowInTaskbar = false;
-        Hide();
-
-        if (!tipShown)
-        {
-            tipShown = true;
-            try
-            {
-                tray.ShowBalloonTip(
-                    4000,
-                    "键盘锁仍在后台运行",
-                    locked
-                        ? "键盘仍处于锁定状态：按 Ctrl + Alt + U，或右键托盘图标解锁。"
-                        : "按 Ctrl + Alt + U 可锁定，右键托盘图标可退出。",
-                    ToolTipIcon.Info);
-            }
-            catch
-            {
-                // 通知中心被关闭时忽略
-            }
-        }
-    }
-
-    private void ShowFromTray()
-    {
-        ShowInTaskbar = true;
-        Show();
-        WindowState = FormWindowState.Normal;
-        Activate();
-        BringToFront();
-    }
-
-    private void ExitApp()
-    {
-        reallyExit = true;
-        Close();
-    }
-
-    private void Toggle()
-    {
-        if (hookFailed)
-            return;
-
-        locked = !locked;
-        UpdateUi();
-
-        // 从托盘菜单切换时，如果窗口正好隐藏着，不强行弹出来
-        if (!Visible && locked)
-        {
-            try
-            {
-                tray.ShowBalloonTip(2500, "键盘已锁定", "按 Ctrl + Alt + U 或右键托盘图标解锁。", ToolTipIcon.Info);
-            }
-            catch
-            {
-            }
-        }
-    }
-
-    private void UpdateUi()
-    {
-        if (locked)
-        {
-            pill.Text = "键盘已锁定";
-            pill.Fill = LockFill;
-            pill.Ink = LockInk;
-
-            btnToggle.Text = "解锁键盘";
-            btnToggle.NormalBack = AccentColor;
-            btnToggle.HoverBack = AccentHover;
-            btnToggle.PressBack = AccentPress;
-            btnToggle.Ink = Color.White;
-
-            lblSub.Text = "所有按键已被拦截 · Ctrl + Alt + U 解锁";
-            Text = "键盘锁 — 已锁定";
-
-            if (mnuToggle != null)
-                mnuToggle.Text = "解锁键盘  (Ctrl+Alt+U)";
-            if (tray != null)
-                tray.Text = "键盘锁 · 已锁定";
-        }
-        else
-        {
-            pill.Text = "键盘未锁定";
-            pill.Fill = OkFill;
-            pill.Ink = OkInk;
-
-            btnToggle.Text = "锁定键盘";
-            btnToggle.NormalBack = InkColor;
-            btnToggle.HoverBack = InkHover;
-            btnToggle.PressBack = InkPress;
-            btnToggle.Ink = Color.White;
-
-            lblSub.Text = "只锁键盘 · 鼠标与滚轮始终可用";
-            Text = "键盘锁";
-
-            if (mnuToggle != null)
-                mnuToggle.Text = "锁定键盘  (Ctrl+Alt+U)";
-            if (tray != null)
-                tray.Text = "键盘锁 · 未锁定";
-        }
-
-        btnToggle.Invalidate();
-        pill.Invalidate();
-        ApplyTopMost(locked);
-    }
-
-    // 只改 Z 序，不激活窗口，避免锁定/解锁时把焦点从你正在用的程序抢走。
-    private void ApplyTopMost(bool on)
-    {
-        if (!IsHandleCreated)
-            return;
-
-        SetWindowPos(
-            Handle,
-            on ? HWND_TOPMOST : HWND_NOTOPMOST,
-            0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-    }
-
-    private int Px(int value)
-    {
-        return (int)Math.Round(value * scale);
-    }
-
-    // 仅在出现未处理异常时写一行日志，便于排查；文件超过 64KB 自动截断。
-    private static void Log(string message)
-    {
-        try
-        {
-            string path = System.IO.Path.Combine(
-                System.IO.Path.GetTempPath(), "keyboardlock-error.log");
-
-            System.IO.FileInfo fi = new System.IO.FileInfo(path);
-            if (fi.Exists && fi.Length > 64 * 1024)
-                fi.Delete();
-
-            System.IO.File.AppendAllText(
-                path,
-                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + message + Environment.NewLine);
-        }
-        catch
-        {
-        }
-    }
-
-    private static float DpiScale()
-    {
-        using (Graphics g = Graphics.FromHwnd(IntPtr.Zero))
-        {
-            return g.DpiX / 96F;
-        }
     }
 
     private static bool IsCtrl(int vk)
@@ -654,7 +502,6 @@ public class KeyboardLockForm : Form
             else if (IsAlt(vk))
                 altDown = isDown;
 
-            // 快捷键 Ctrl + Alt + U。按住不放时系统会连发按下事件，只认第一次。
             if (vk == VK_U)
             {
                 if (isUp)
@@ -666,38 +513,59 @@ public class KeyboardLockForm : Form
                     uDown = true;
                     if (ctrlDown && altDown)
                     {
-                        current.Toggle();
+                        current.isLocked = !current.isLocked;
+                        if (current.IsHandleCreated)
+                        {
+                            current.BeginInvoke((MethodInvoker)delegate
+                            {
+                                current.OnLockStateChanged();
+                            });
+                        }
                         return (IntPtr)1;
                     }
                 }
             }
 
-            // 修饰键：吞“按下”，放行“抬起”。
-            // 这是修复滚轮异常的关键（见文件头说明）。
             if (IsModifier(vk))
             {
                 if (isUp)
                     return CallNextHookEx(hookId, nCode, wParam, lParam);
-                return current.locked ? (IntPtr)1 : CallNextHookEx(hookId, nCode, wParam, lParam);
+                return current.isLocked ? (IntPtr)1 : CallNextHookEx(hookId, nCode, wParam, lParam);
             }
 
-            if (current.locked)
+            if (current.isLocked)
                 return (IntPtr)1;
 
             return CallNextHookEx(hookId, nCode, wParam, lParam);
         }
         catch
         {
-            // 钩子回调里抛异常会被系统直接摘钩，任何异常都必须放行按键
             return CallNextHookEx(hookId, nCode, wParam, lParam);
         }
     }
+}
+
+internal static class Program
+{
+    private const int SW_RESTORE = 9;
+    private const int WM_APP_SHOW = 0x8000 + 1;
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr FindWindowW(string lpClassName, string lpWindowName);
+
+    [DllImport("user32.dll")]
+    private static extern bool PostMessageW(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
 
     private static void ActivateExistingInstance()
     {
         try
         {
-            // 窗口可能已收进托盘（不可见），FindWindow 仍能找到隐藏窗口
             IntPtr h = FindWindowW(null, "键盘锁 — 已锁定");
             if (h == IntPtr.Zero)
                 h = FindWindowW(null, "键盘锁");
@@ -725,13 +593,93 @@ public class KeyboardLockForm : Form
         }
         catch
         {
-            // 唤起失败也不影响已经运行的那个实例
         }
+    }
+
+    private static void EnsurePhysicalDllsExtracted()
+    {
+        try
+        {
+            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            string[] dlls = new string[]
+            {
+                "WebView2Loader.dll",
+                "Microsoft.Web.WebView2.Core.dll",
+                "Microsoft.Web.WebView2.WinForms.dll"
+            };
+            Assembly asm = Assembly.GetExecutingAssembly();
+            foreach (string dll in dlls)
+            {
+                string target = Path.Combine(baseDir, dll);
+                if (File.Exists(target))
+                    continue;
+
+                using (Stream s = asm.GetManifestResourceStream("KeyboardLock." + dll))
+                {
+                    if (s != null)
+                    {
+                        using (FileStream fs = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.Read))
+                        {
+                            s.CopyTo(fs);
+                        }
+                    }
+                }
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static Assembly ResolveEmbeddedAssembly(object sender, ResolveEventArgs args)
+    {
+        try
+        {
+            string shortName = new AssemblyName(args.Name).Name;
+            string localPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, shortName + ".dll");
+            if (File.Exists(localPath))
+                return Assembly.LoadFrom(localPath);
+
+            Assembly asm = Assembly.GetExecutingAssembly();
+            using (Stream s = asm.GetManifestResourceStream("KeyboardLock." + shortName + ".dll"))
+            {
+                if (s == null)
+                    return null;
+
+                byte[] raw = new byte[s.Length];
+                int read = 0;
+                while (read < raw.Length)
+                {
+                    int n = s.Read(raw, read, raw.Length - read);
+                    if (n <= 0)
+                        break;
+                    read += n;
+                }
+                return Assembly.Load(raw);
+            }
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void RunApp()
+    {
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        KeyboardLockForm form = new KeyboardLockForm();
+        form.Show();
+        ShowWindow(form.Handle, 5); // SW_SHOW: 防止从后台终端启动时受 STARTUPINFO SW_HIDE 影响
+        Application.Run(form);
     }
 
     [STAThread]
     public static void Main()
     {
+        AppDomain.CurrentDomain.AssemblyResolve += ResolveEmbeddedAssembly;
+
         bool createdNew;
         using (Mutex mutex = new Mutex(true, @"Local\KeyboardLock_SingleInstance", out createdNew))
         {
@@ -741,19 +689,8 @@ public class KeyboardLockForm : Form
                 return;
             }
 
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
-
-            Application.ThreadException += delegate(object s, ThreadExceptionEventArgs ex)
-            {
-                Log("ThreadException: " + ex.Exception);
-            };
-            AppDomain.CurrentDomain.UnhandledException += delegate(object s, UnhandledExceptionEventArgs ex)
-            {
-                Log("UnhandledException: " + ex.ExceptionObject);
-            };
-
-            Application.Run(new KeyboardLockForm());
+            EnsurePhysicalDllsExtracted();
+            RunApp();
         }
     }
 }
