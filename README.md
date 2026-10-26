@@ -21,9 +21,18 @@
 
 ## 下载
 
-到 [Releases](../../releases) 下载最新的 `KeyboardLock-v*.zip`，解压后双击 `KeyboardLock.exe`。
+到 [Releases](../../releases) 下载：
+
+| 资产 | 说明 |
+|---|---|
+| `KeyboardLock-v2.1.0.zip` | 完整包：解压后是 `KeyboardLock.exe` + `使用说明.txt` |
+| `KeyboardLock.exe` | 单独的可执行文件，想直接替换旧版时用这个 |
+
+解压后双击 `KeyboardLock.exe` 即可，免安装、不需要管理员权限。
 
 需要 Windows 10 / 11（使用系统自带的 .NET Framework 4.x，常规系统均已内置）。界面由 GDI+ 原生自绘，**不再依赖 Edge WebView2 运行时**，精简版 / LTSC 系统同样可用。
+
+> 从 v1.x 升级：v1.x 的旧版本仍在历史 Release 里保留，但**请直接换成 v2.1.0**——它是原生自绘版，不需要 Edge WebView2 运行时，也不再往 `%LocalAppData%` 释放任何 DLL。
 
 ## 使用
 
