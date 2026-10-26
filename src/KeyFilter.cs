@@ -29,15 +29,23 @@ internal sealed class KeyFilter
     private const int AltGrFakeCtrlScanFlag = 0x200;
     private const int SlotAltGrFakeCtrl = 0x07;
 
-    // 正常按住任何键时，硬件自动重复每 30~1000ms 就会产生一次事件。
-    // 若连续超过 2 秒没有任何按键事件，说明此前记录的“按住”状态已经在 UAC / Ctrl+Alt+Del /
+    // 正常按住任何键时，硬件自动重复每 30~1000ms 就会产生一次事件；
+    // 即便关闭了自动重复或慢速按组合键，5 秒窗口也足以覆盖正常的 Ctrl+Alt+U 操作。
+    // 若连续超过 5 秒没有任何按键事件，说明此前记录的“按住”状态很可能已在 UAC / Ctrl+Alt+Del /
     // 管理员窗口里松开（普通权限钩子收不到那里的 KEYUP），应视为已抬起，避免之后单按 U 误触发。
-    private const uint StaleHoldResetMs = 2000;
+    private const uint StaleHoldResetMs = 5000;
 
     private readonly uint[] held = new uint[8];   // 物理上按着的键（256 位）
     private readonly uint[] passed = new uint[8]; // KEYDOWN 已放行给系统、尚未放行 KEYUP 的键
     private uint lastEventTime;
     private bool hasEvent;
+
+    /// <summary>清空当前记录的物理按住状态（用于会话切换、锁屏恢复或重装钩子时消除残留）。</summary>
+    public void ResetHeld()
+    {
+        Array.Clear(held, 0, held.Length);
+        hasEvent = false;
+    }
 
     /// <summary>处理一次按键事件。time 取 KBDLLHOOKSTRUCT.time（毫秒，允许回绕）。</summary>
     public int Process(int vk, int scanCode, bool isUp, uint time, bool locked)

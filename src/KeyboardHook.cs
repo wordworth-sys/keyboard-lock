@@ -7,7 +7,7 @@ using System.Threading;
 ///
 /// 为什么不放在 UI 线程：系统要求钩子回调在 LowLevelHooksTimeout（约 1 秒）内返回，
 /// 超时多次后 Win7+ 会静默摘除钩子且不通知程序——界面会继续显示"已锁定"，键盘却已恢复。
-/// UI 线程一旦卡顿（弹窗、WebView2 初始化、GC），还会拖慢全系统的每一次按键。
+/// UI 线程一旦卡顿（弹窗、界面重绘、GC），还会拖慢全系统的每一次按键。
 /// 专用线程只跑一个空消息循环，回调永远能立即得到处理。
 /// </summary>
 internal static class KeyboardHook
@@ -17,6 +17,7 @@ internal static class KeyboardHook
     private const int LLKHF_UP = 0x80;
 
     private const uint WM_QUIT = 0x0012;
+    private const uint WM_APP_RESET = 0x800A;
     private const uint PM_NOREMOVE = 0x0000;
 
     private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
@@ -138,22 +139,56 @@ internal static class KeyboardHook
                     // 低层钩子回调在本线程从 GetMessage 中取消息时被调用；收到 WM_QUIT 时 GetMessage 返回 0。
                     while (GetMessage(out msg, IntPtr.Zero, 0, 0) > 0)
                     {
+                        if (msg.message == WM_APP_RESET)
+                            filter.ResetHeld();
                     }
 
                     UnhookWindowsHookEx(h);
-                    Volatile.Write(ref hookId, IntPtr.Zero);
+                    Interlocked.CompareExchange(ref hookId, IntPtr.Zero, h);
                 });
                 t.Name = "KeyboardLock.Hook";
                 t.IsBackground = true;
                 t.Priority = ThreadPriority.Highest;
                 t.Start();
 
-                ready.WaitOne();
+                if (!ready.WaitOne(5000))
+                {
+                    error = 1460; // ERROR_TIMEOUT
+                    ok = false;
+                }
                 thread = ok ? t : null;
             }
 
             win32Error = error;
             return ok;
+        }
+    }
+
+    /// <summary>通知钩子线程清空记录的按键按住状态（用于会话解锁、睡眠唤醒等场景）。</summary>
+    public static void ResetHeldState()
+    {
+        lock (startStopLock)
+        {
+            if (thread != null && IsRunning)
+                PostThreadMessage(threadId, WM_APP_RESET, IntPtr.Zero, IntPtr.Zero);
+        }
+    }
+
+    /// <summary>保持当前锁定状态并重新安装低层键盘钩子（用于睡眠恢复或会话切换后确保钩子有效）。</summary>
+    public static bool Reinstall(out int win32Error)
+    {
+        lock (startStopLock)
+        {
+            bool wasLocked = IsLocked;
+            if (thread != null)
+            {
+                PostThreadMessage(threadId, WM_QUIT, IntPtr.Zero, IntPtr.Zero);
+                thread.Join(1000);
+                thread = null;
+            }
+            filter.ResetHeld();
+            SetLocked(wasLocked);
+            return Start(out win32Error);
         }
     }
 

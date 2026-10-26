@@ -146,6 +146,22 @@ internal static class KeyFilterTests
             Case("时间戳回绕（49.7 天）不影响判定", () =>
                 new Rig("wrap", locked: false, start: uint.MaxValue - 40)
                     .Down(LCTRL, P).Down(LALT, P).Down(U, T).Repeat(U, 3, B).Up(U, B)),
+
+            Case("慢速组合键（Ctrl → 2.5s → Alt → 2.0s → U，无自动重复）仍能正常切换", () =>
+                new Rig("slow-chord-unlocked", locked: false)
+                    .Down(LCTRL, P, dt: 30)
+                    .Down(LALT, P, dt: 2500)
+                    .Down(U, T, dt: 2000)
+                    .Up(U, B).Up(LALT, P).Up(LCTRL, P)
+                    .AssertLocked(true)),
+
+            Case("锁定态下按住 Ctrl+Alt 停顿 3.5 秒（无中间重复事件）再按 U 仍能解锁", () =>
+                new Rig("slow-chord-locked", locked: true)
+                    .Down(LCTRL, B, dt: 30)
+                    .Down(LALT, B, dt: 30)
+                    .Down(U, T, dt: 3500)
+                    .Up(U, B).Up(LALT, B).Up(LCTRL, B)
+                    .AssertLocked(false)),
         };
 
         foreach (var t in tests)
