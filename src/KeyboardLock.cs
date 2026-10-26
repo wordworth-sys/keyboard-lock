@@ -49,16 +49,22 @@ public class KeyboardLockForm : Form
     private bool hookAvailable;
     private int hookError;
     private bool reallyExit;
+    private readonly bool silentStart;
 
     private AluPanelView panelView;
     private NotifyIcon tray;
     private ContextMenuStrip trayMenu;
     private ToolStripMenuItem mnuToggle;
+    private ToolStripMenuItem mnuAutoStart;
     private Font menuFont;
     private Font menuFontBold;
 
-    public KeyboardLockForm()
+    /// <param name="silent">
+    /// true 表示开机自启：只驻留托盘、不显示窗口（仍会安装键盘钩子，快捷键照常可用）。
+    /// </param>
+    public KeyboardLockForm(bool silent)
     {
+        silentStart = silent;
         AutoScaleMode = AutoScaleMode.None;
         Text = "键盘锁";
         FormBorderStyle = FormBorderStyle.None;
@@ -141,11 +147,17 @@ public class KeyboardLockForm : Form
         mnuToggle.Enabled = hookAvailable;
         mnuToggle.Click += delegate { ToggleLock(); };
 
+        mnuAutoStart = new ToolStripMenuItem("开机静默启动");
+        mnuAutoStart.Checked = AutoStart.IsEnabled;
+        mnuAutoStart.Click += delegate { ToggleAutoStart(); };
+
         ToolStripMenuItem mnuExit = new ToolStripMenuItem("完全退出");
         mnuExit.Click += delegate { ExitApp(); };
 
         trayMenu.Items.Add(mnuShow);
         trayMenu.Items.Add(mnuToggle);
+        trayMenu.Items.Add(new ToolStripSeparator());
+        trayMenu.Items.Add(mnuAutoStart);
         trayMenu.Items.Add(new ToolStripSeparator());
         trayMenu.Items.Add(mnuExit);
 
@@ -213,6 +225,62 @@ public class KeyboardLockForm : Form
         {
             // 窗口句柄恰好在退出过程中被销毁，忽略即可。
         }
+    }
+
+    /// <summary>
+    /// 开机静默启动：只把程序跑进托盘，不显示窗口。
+    /// 仍然会创建窗口句柄（键盘钩子装在句柄创建之后），否则快捷键就失效了。
+    /// </summary>
+    public void StartSilently()
+    {
+        EnsureNativeHandle();
+
+        if (tray == null)
+            CreateTray();
+
+        UpdatePanelState();
+
+        // 开机时不该弹模态框：钩子失败只体现在托盘气泡提示上。
+    }
+
+    /// <summary>强制创建窗口句柄（不会显示窗口）。</summary>
+    private void EnsureNativeHandle()
+    {
+        try
+        {
+            // 访问 Handle 才会真正建窗；句柄建不出来时只是钩子装不上，
+            // 不该在开机时抛异常弹崩溃框，托盘气泡会显示「钩子不可用」。
+            IntPtr handle = Handle;
+            if (handle == IntPtr.Zero)
+                hookAvailable = false;
+        }
+        catch
+        {
+            hookAvailable = false;
+        }
+    }
+
+    /// <summary>托盘菜单：切换开机自启。</summary>
+    private void ToggleAutoStart()
+    {
+        bool want = !AutoStart.IsEnabled;
+        bool ok = want ? AutoStart.Enable() : AutoStart.Disable();
+
+        if (ok)
+        {
+            if (mnuAutoStart != null)
+                mnuAutoStart.Checked = want;
+            return;
+        }
+
+        MessageBox.Show(
+            this,
+            want
+                ? "写入启动文件夹快捷方式失败。\n\n可以手动在「启动」文件夹里创建一个指向 KeyboardLock.exe 的快捷方式，\n并加上命令行参数 " + AutoStart.SilentArgument + "。"
+                : "删除启动文件夹里的快捷方式失败，请手动删除「" + AutoStart.ShortcutPath + "」。",
+            "键盘锁",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Warning);
     }
 
     private void ShowHookError()
@@ -298,6 +366,10 @@ public class KeyboardLockForm : Form
     {
         reallyExit = true;
         Close();
+
+        // 静默模式下没有 Application.Run(form)，消息循环要自己收尾。
+        if (silentStart)
+            Application.Exit();
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -346,6 +418,11 @@ public class KeyboardLockForm : Form
 
     protected override void WndProc(ref Message m)
     {
+        // 开机自启的那个实例已经跑着时，自启实例直接退出：这里什么都不做，
+        // 不能把已在托盘里静默运行的窗口弹出来。
+        if (Program.SilentInstanceMessage != 0 && m.Msg == Program.SilentInstanceMessage)
+            return;
+
         if ((m.Msg == Program.ShowInstanceMessage && m.Msg != 0) || m.Msg == WM_APP_SHOW)
         {
             ShowFromTray();
@@ -385,6 +462,11 @@ internal static class Program
     /// </summary>
     internal static readonly int ShowInstanceMessage = (int)RegisterWindowMessageW("KeyboardLock.ShowInstance.{6F1C2A4E}");
 
+    /// <summary>
+    /// 开机自启时用的消息：已有实例在跑就什么都不做，避免把静默驻留的窗口弹出来。
+    /// </summary>
+    internal static readonly int SilentInstanceMessage = (int)RegisterWindowMessageW("KeyboardLock.SilentInstance.{6F1C2A4E}");
+
     private static void ActivateExistingInstance()
     {
         if (ShowInstanceMessage == 0)
@@ -395,30 +477,70 @@ internal static class Program
         PostMessageW(HWND_BROADCAST, ShowInstanceMessage, IntPtr.Zero, IntPtr.Zero);
     }
 
+    /// <summary>静默唤醒：已有实例在跑就什么都不做，直接退出本进程。</summary>
+    private static void NotifyExistingInstanceSilently()
+    {
+        if (SilentInstanceMessage == 0)
+            return;
+
+        PostMessageW(HWND_BROADCAST, SilentInstanceMessage, IntPtr.Zero, IntPtr.Zero);
+    }
+
+    /// <summary>命令行里是否带了静默启动参数。</summary>
+    private static bool HasSilentArgument(string[] args)
+    {
+        if (args == null)
+            return false;
+
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (string.Equals(args[i], AutoStart.SilentArgument, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void RunApp()
+    private static void RunApp(bool silent)
     {
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
-        KeyboardLockForm form = new KeyboardLockForm();
+        KeyboardLockForm form = new KeyboardLockForm(silent);
+
+        if (silent)
+        {
+            // 只进托盘：不显示窗口，但键盘钩子照常装上，快捷键照常可用。
+            form.StartSilently();
+            Application.Run();
+            return;
+        }
+
         form.Show();
         ShowWindow(form.Handle, 5); // SW_SHOW: 防止从后台终端启动时受 STARTUPINFO SW_HIDE 影响
         Application.Run(form);
     }
 
     [STAThread]
-    public static void Main()
+    public static void Main(string[] args)
     {
+        bool silent = HasSilentArgument(args);
+
         bool createdNew;
         using (Mutex mutex = new Mutex(true, @"Local\KeyboardLock_SingleInstance", out createdNew))
         {
             if (!createdNew)
             {
-                ActivateExistingInstance();
+                if (silent)
+                    NotifyExistingInstanceSilently();
+                else
+                    ActivateExistingInstance();
                 return;
             }
 
-            RunApp();
+            // exe 换了目录或换了版本时，把启动文件夹里的快捷方式指回当前 exe。
+            AutoStart.EnsureCurrent();
+
+            RunApp(silent);
         }
     }
 }
