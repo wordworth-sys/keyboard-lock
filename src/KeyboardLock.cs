@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -7,6 +8,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 using Microsoft.Web.WebView2.Core;
@@ -14,32 +16,11 @@ using Microsoft.Web.WebView2.WinForms;
 
 public class KeyboardLockForm : Form
 {
-    private const int WH_KEYBOARD_LL = 13;
-
-    private const int WM_KEYDOWN = 0x0100;
-    private const int WM_KEYUP = 0x0101;
-    private const int WM_SYSKEYDOWN = 0x0104;
-    private const int WM_SYSKEYUP = 0x0105;
-
     private const int WM_NCLBUTTONDOWN = 0xA1;
     private const int HTCAPTION = 0x2;
 
     private const int WM_APP_SHOW = 0x8000 + 1;
     private const int WM_APP_EXIT = 0x8000 + 2;
-
-    private const int VK_LBUTTON = 0x01;
-    private const int VK_SHIFT = 0x10;
-    private const int VK_LSHIFT = 0xA0;
-    private const int VK_RSHIFT = 0xA1;
-    private const int VK_CONTROL = 0x11;
-    private const int VK_LCONTROL = 0xA2;
-    private const int VK_RCONTROL = 0xA3;
-    private const int VK_MENU = 0x12;
-    private const int VK_LMENU = 0xA4;
-    private const int VK_RMENU = 0xA5;
-    private const int VK_LWIN = 0x5B;
-    private const int VK_RWIN = 0x5C;
-    private const int VK_U = 0x55;
 
     private const uint SWP_NOSIZE = 0x0001;
     private const uint SWP_NOMOVE = 0x0002;
@@ -48,19 +29,8 @@ public class KeyboardLockForm : Form
     private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
     private static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
 
-    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool UnhookWindowsHookEx(IntPtr hhk);
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
-    private static extern IntPtr GetModuleHandle(string lpModuleName);
+    // 微软官方 WebView2 Runtime（Evergreen）在线安装包。
+    private const string WebView2DownloadUrl = "https://go.microsoft.com/fwlink/p/?LinkId=2124703";
 
     [DllImport("user32.dll")]
     private static extern bool ReleaseCapture();
@@ -71,11 +41,11 @@ public class KeyboardLockForm : Form
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
 
-    [DllImport("user32.dll")]
-    private static extern short GetAsyncKeyState(int vKey);
-
     [DllImport("gdi32.dll")]
     private static extern IntPtr CreateRoundRectRgn(int nLeftRect, int nTopRect, int nRightRect, int nBottomRect, int nWidthEllipse, int nHeightEllipse);
+
+    [DllImport("gdi32.dll")]
+    private static extern bool DeleteObject(IntPtr hObject);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern bool SetWindowTextW(IntPtr hWnd, string lpString);
@@ -86,31 +56,21 @@ public class KeyboardLockForm : Form
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
 
-    private static KeyboardLockForm current;
-    private static IntPtr hookId = IntPtr.Zero;
-    private static readonly LowLevelKeyboardProc hookProc = HookCallback;
-
-    private static bool ctrlDown;
-    private static bool altDown;
-    private static bool uDown;
-
-    private volatile bool isLocked;
+    private bool hookAvailable;
+    private int hookError;
     private bool reallyExit;
     private bool webReady;
+    private bool webRuntimeMissing;
 
     private WebView2 webView;
     private NotifyIcon tray;
     private ContextMenuStrip trayMenu;
     private ToolStripMenuItem mnuToggle;
-
-    private System.Windows.Forms.Timer dragTimer;
-    private Point dragStartCursor;
-    private Point dragStartLocation;
+    private Font menuFont;
+    private Font menuFontBold;
 
     public KeyboardLockForm()
     {
-        current = this;
-
         AutoScaleMode = AutoScaleMode.None;
         Text = "键盘锁";
         FormBorderStyle = FormBorderStyle.None;
@@ -127,10 +87,24 @@ public class KeyboardLockForm : Form
         Height = h;
         ClientSize = new Size(w, h);
 
-        dragTimer = new System.Windows.Forms.Timer();
-        dragTimer.Interval = 8;
-        dragTimer.Tick += OnDragTick;
+        // 图标和圆角区域只创建一次：窗口句柄重建时 WinForms 会沿用这两个属性，不会重复分配 GDI 对象。
+        try
+        {
+            Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+        }
+        catch
+        {
+        }
 
+        int radius = (int)Math.Round(16 * scale);
+        IntPtr hrgn = CreateRoundRectRgn(0, 0, w + 1, h + 1, radius * 2, radius * 2);
+        if (hrgn != IntPtr.Zero)
+        {
+            Region = Region.FromHrgn(hrgn);
+            DeleteObject(hrgn);
+        }
+
+        KeyboardHook.HotkeyToggled += OnHotkeyToggled;
         Shown += OnFormShown;
     }
 
@@ -150,14 +124,18 @@ public class KeyboardLockForm : Form
 
     private void CreateTray()
     {
+        menuFont = new Font("Microsoft YaHei UI", 9F);
+        menuFontBold = new Font(menuFont, FontStyle.Bold);
+
         trayMenu = new ContextMenuStrip();
-        trayMenu.Font = new Font("Microsoft YaHei UI", 9F);
+        trayMenu.Font = menuFont;
 
         ToolStripMenuItem mnuShow = new ToolStripMenuItem("显示主界面");
-        mnuShow.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
+        mnuShow.Font = menuFontBold;
         mnuShow.Click += delegate { ShowFromTray(); };
 
         mnuToggle = new ToolStripMenuItem("锁定键盘 (Ctrl+Alt+U)");
+        mnuToggle.Enabled = hookAvailable;
         mnuToggle.Click += delegate { ToggleLock(); };
 
         ToolStripMenuItem mnuExit = new ToolStripMenuItem("完全退出");
@@ -170,7 +148,7 @@ public class KeyboardLockForm : Form
 
         tray = new NotifyIcon();
         tray.Icon = Icon;
-        tray.Text = "键盘锁 · 未锁定";
+        tray.Text = hookAvailable ? "键盘锁 · 未锁定" : "键盘锁 · 钩子不可用";
         tray.ContextMenuStrip = trayMenu;
         tray.Visible = true;
         tray.DoubleClick += delegate { ShowFromTray(); };
@@ -188,6 +166,9 @@ public class KeyboardLockForm : Form
             CreateParams cp = base.CreateParams;
             cp.Parent = IntPtr.Zero;
             cp.ExStyle |= 0x00040000; // WS_EX_APPWINDOW
+            // 无边框窗体默认没有这两个样式：补上后，界面里的「–」有系统最小化动画，
+            // 点任务栏按钮也能正常最小化/还原；无标题栏时它们不会绘制任何系统按钮。
+            cp.Style |= 0x00020000 | 0x00080000; // WS_MINIMIZEBOX | WS_SYSMENU
             return cp;
         }
     }
@@ -198,18 +179,6 @@ public class KeyboardLockForm : Form
 
         SetWindowTextW(Handle, Text);
 
-        float scale = GetSystemDpiScale();
-        int radius = (int)Math.Round(16 * scale);
-        Region = Region.FromHrgn(CreateRoundRectRgn(0, 0, Width + 1, Height + 1, radius * 2, radius * 2));
-
-        try
-        {
-            Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-        }
-        catch
-        {
-        }
-
         try
         {
             int preference = 2; // DWMWCP_ROUND
@@ -219,62 +188,180 @@ public class KeyboardLockForm : Form
         {
         }
 
-        InstallHook();
+        StartHook();
+    }
+
+    private void StartHook()
+    {
+        int error;
+        hookAvailable = KeyboardHook.Start(out error);
+        hookError = error;
+    }
+
+    private void OnHotkeyToggled()
+    {
+        // 在钩子线程上被调用：只投递，绝不在这里做任何耗时操作。
+        try
+        {
+            if (IsHandleCreated && !IsDisposed)
+                BeginInvoke((MethodInvoker)OnLockStateChanged);
+        }
+        catch (InvalidOperationException)
+        {
+            // 窗口句柄恰好在退出过程中被销毁，忽略即可。
+        }
+    }
+
+    private void ShowHookError()
+    {
+        MessageBox.Show(
+            this,
+            "键盘钩子安装失败（Win32 错误码 " + hookError + "），锁定功能已禁用。\n\n" +
+            "常见原因：杀毒软件 / 安全软件拦截了全局键盘钩子。\n" +
+            "可以把 KeyboardLock.exe 加入信任列表后重新启动程序。",
+            "键盘锁",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Warning);
     }
 
     private async void OnFormShown(object sender, EventArgs e)
     {
         if (tray == null)
-        {
             CreateTray();
+
+        await InitWebViewAsync();
+
+        if (!hookAvailable)
+            ShowHookError();
+    }
+
+    private static bool IsWebView2RuntimeInstalled()
+    {
+        try
+        {
+            return !string.IsNullOrEmpty(CoreWebView2Environment.GetAvailableBrowserVersionString());
+        }
+        catch
+        {
+            // WebView2RuntimeNotFoundException 或 Loader 加载失败：都按“不可用”处理。
+            return false;
+        }
+    }
+
+    private void ShowWebView2Missing()
+    {
+        DialogResult r = MessageBox.Show(
+            this,
+            "界面需要 Microsoft Edge WebView2 Runtime，本机没有安装。\n" +
+            "（Windows 10 / 11 绝大多数已自带，精简版 / LTSC 系统可能没有。）\n\n" +
+            "锁定功能不受影响：可以用 Ctrl+Alt+U，或右键托盘图标锁定 / 解锁 / 退出。\n\n" +
+            "是否现在打开微软官方下载？安装后重新启动本程序即可。",
+            "键盘锁",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Information);
+
+        if (r == DialogResult.Yes)
+        {
+            try
+            {
+                Process.Start(WebView2DownloadUrl);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private async Task InitWebViewAsync()
+    {
+        if (!IsWebView2RuntimeInstalled())
+        {
+            // 没有运行时就没有界面：收进托盘，只保留快捷键和托盘菜单，不留一块空白窗口。
+            webRuntimeMissing = true;
+            ShowWebView2Missing();
+            Hide();
+            return;
         }
 
         try
         {
-            if (webView == null)
-            {
-                webView = new WebView2();
-                webView.Dock = DockStyle.Fill;
-                webView.DefaultBackgroundColor = Color.Transparent;
-                webView.AllowExternalDrop = false;
-                Controls.Add(webView);
-            }
+            webView = new WebView2();
+            webView.Dock = DockStyle.Fill;
+            // 与窗体同色的不透明背景：免去透明合成，加载前也不会闪白。
+            webView.DefaultBackgroundColor = BackColor;
+            webView.AllowExternalDrop = false;
+            Controls.Add(webView);
 
-            var localData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KeyboardLock");
-            Directory.CreateDirectory(localData);
-            var env = await CoreWebView2Environment.CreateAsync(null, localData);
+            string userDataDir = Path.Combine(Program.AppDataDir, "webview");
+            CoreWebView2Environment env = await CoreWebView2Environment.CreateAsync(null, userDataDir);
             await webView.EnsureCoreWebView2Async(env);
-            webView.DefaultBackgroundColor = Color.Transparent;
 
-            CoreWebView2Settings s = webView.CoreWebView2.Settings;
+            CoreWebView2 core = webView.CoreWebView2;
+            CoreWebView2Settings s = core.Settings;
             s.AreDefaultContextMenusEnabled = false;
             s.AreDevToolsEnabled = false;
             s.IsStatusBarEnabled = false;
             s.IsZoomControlEnabled = false;
+            s.AreBrowserAcceleratorKeysEnabled = false; // F5 / Ctrl+P / Ctrl+F 等浏览器快捷键对这个面板没有意义
 
-            webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
-            webView.CoreWebView2.NavigationCompleted += delegate
-            {
-                webReady = true;
-                SyncStateToWeb();
-            };
+            core.WebMessageReceived += OnWebMessageReceived;
+            core.NavigationCompleted += OnNavigationCompleted;
+            core.ProcessFailed += OnWebProcessFailed;
 
-            webView.CoreWebView2.NavigateToString(LoadUiHtml());
+            core.NavigateToString(LoadUiHtml());
         }
         catch (Exception ex)
         {
-            MessageBox.Show("WebView2 初始化失败：" + ex.Message, "键盘锁", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, "界面初始化失败：" + ex.Message, "键盘锁", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+    }
+
+    private void OnNavigationCompleted(object sender, CoreWebView2NavigationCompletedEventArgs e)
+    {
+        webReady = true;
+        SyncStateToWeb();
+    }
+
+    private void OnWebProcessFailed(object sender, CoreWebView2ProcessFailedEventArgs e)
+    {
+        // 渲染进程崩溃时页面会停在旧状态，界面可能显示“未锁定”而键盘其实锁着——必须重建并重新同步。
+        webReady = false;
+
+        if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited)
+        {
+            if (!reallyExit && !IsDisposed)
+                BeginInvoke((MethodInvoker)RecreateWebView);
+        }
+        else if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessExited
+            || e.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessUnresponsive)
+        {
+            try
+            {
+                webView.CoreWebView2.NavigateToString(LoadUiHtml()); // NavigationCompleted 会重新同步状态
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private async void RecreateWebView()
+    {
+        if (webView != null)
+        {
+            Controls.Remove(webView);
+            webView.Dispose();
+            webView = null;
+        }
+
+        if (!reallyExit && !IsDisposed)
+            await InitWebViewAsync();
     }
 
     private static string LoadUiHtml()
     {
-        string localFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ui.html");
-        if (File.Exists(localFile))
-        {
-            return File.ReadAllText(localFile, Encoding.UTF8);
-        }
-
+        // 只使用编译时嵌入的界面，避免 exe 旁边残留的旧 ui.html 覆盖新版本。
+        // 调试界面时可以直接用浏览器打开 src/ui.html（脚本自带离线回退）。
         Assembly asm = Assembly.GetExecutingAssembly();
         using (Stream s = asm.GetManifestResourceStream("KeyboardLock.ui.html"))
         {
@@ -289,85 +376,49 @@ public class KeyboardLockForm : Form
 
     private void OnWebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
-        string json = e.WebMessageAsJson;
-        if (string.IsNullOrEmpty(json))
-            return;
-
-        if (json.IndexOf("\"toggle\"", StringComparison.OrdinalIgnoreCase) >= 0)
+        string command;
+        try
         {
-            ToggleLock();
+            command = e.TryGetWebMessageAsString();
         }
-        else if (json.IndexOf("\"hide\"", StringComparison.OrdinalIgnoreCase) >= 0)
+        catch (ArgumentException)
         {
-            this.Hide();
-        }
-        else if (json.IndexOf("\"minimize\"", StringComparison.OrdinalIgnoreCase) >= 0)
-        {
-            this.WindowState = FormWindowState.Minimized;
-        }
-        else if (json.IndexOf("\"drag\"", StringComparison.OrdinalIgnoreCase) >= 0)
-        {
-            StartNativeDrag();
-        }
-    }
-
-    private void StartNativeDrag()
-    {
-        dragStartCursor = Cursor.Position;
-        dragStartLocation = this.Location;
-
-        ReleaseCapture();
-        SendMessage(this.Handle, WM_NCLBUTTONDOWN, HTCAPTION, 0);
-
-        if ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0)
-        {
-            dragTimer.Start();
-        }
-    }
-
-    private void OnDragTick(object sender, EventArgs e)
-    {
-        if ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) == 0)
-        {
-            dragTimer.Stop();
-            return;
+            return; // 页面只发送纯字符串命令，其余一律忽略
         }
 
-        Point cur = Cursor.Position;
-        int nx = dragStartLocation.X + (cur.X - dragStartCursor.X);
-        int ny = dragStartLocation.Y + (cur.Y - dragStartCursor.Y);
-        if (Location.X != nx || Location.Y != ny)
+        switch (command)
         {
-            Location = new Point(nx, ny);
-        }
-    }
-
-    private void InstallHook()
-    {
-        if (hookId != IntPtr.Zero)
-            return;
-
-        IntPtr hMod = GetModuleHandle(Process.GetCurrentProcess().MainModule.ModuleName);
-        hookId = SetWindowsHookEx(WH_KEYBOARD_LL, hookProc, hMod, 0);
-    }
-
-    private void UninstallHook()
-    {
-        if (hookId != IntPtr.Zero)
-        {
-            UnhookWindowsHookEx(hookId);
-            hookId = IntPtr.Zero;
+            case "toggle":
+                ToggleLock();
+                break;
+            case "hide":
+                Hide();
+                break;
+            case "minimize":
+                WindowState = FormWindowState.Minimized;
+                break;
+            case "drag":
+                // 交给系统的原生移动循环：SendMessage 会一直阻塞到松开鼠标（或按 ESC 取消）。
+                ReleaseCapture();
+                SendMessage(Handle, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+                break;
         }
     }
 
     private void ToggleLock()
     {
-        isLocked = !isLocked;
+        // 钩子没装上时拒绝切换，否则界面会显示"已锁定"而键盘实际仍可用。
+        if (!hookAvailable)
+            return;
+
+        KeyboardHook.Toggle();
         OnLockStateChanged();
     }
 
     private void OnLockStateChanged()
     {
+        bool isLocked = KeyboardHook.IsLocked;
+
         Text = isLocked ? "键盘锁 — 已锁定" : "键盘锁";
         if (IsHandleCreated)
             SetWindowTextW(Handle, Text);
@@ -391,32 +442,89 @@ public class KeyboardLockForm : Form
 
     private void SyncStateToWeb()
     {
-        if (!webReady || webView == null || webView.CoreWebView2 == null)
+        // 窗口隐藏时页面处于挂起状态，不去唤醒它；重新显示时会再同步一次。
+        if (!webReady || !Visible || webView == null || webView.CoreWebView2 == null)
             return;
 
         try
         {
-            webView.CoreWebView2.PostWebMessageAsJson("{\"locked\":" + (isLocked ? "true" : "false") + "}");
+            webView.CoreWebView2.PostWebMessageAsJson(
+                "{\"locked\":" + (KeyboardHook.IsLocked ? "true" : "false") +
+                ",\"available\":" + (hookAvailable ? "true" : "false") + "}");
         }
         catch
         {
+            webReady = false; // 通道已失效，等 ProcessFailed 重建后由 NavigationCompleted 恢复
+        }
+    }
+
+    protected override void OnVisibleChanged(EventArgs e)
+    {
+        base.OnVisibleChanged(e);
+        UpdateWebViewActivity();
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        UpdateWebViewActivity();
+    }
+
+    /// <summary>
+    /// 收进托盘：挂起 WebView2 渲染进程（停止一切调度并释放内存）；
+    /// 最小化：请求低内存模式；重新显示：恢复并同步状态。键盘钩子在独立线程上，完全不受影响。
+    /// </summary>
+    private async void UpdateWebViewActivity()
+    {
+        if (webView == null || webView.CoreWebView2 == null)
+            return;
+
+        CoreWebView2 core = webView.CoreWebView2;
+        try
+        {
+            if (!Visible)
+            {
+                // 窗体隐藏后 WebView2 控件已自动置 IsVisible = false，满足挂起条件。
+                if (!core.IsSuspended)
+                    await core.TrySuspendAsync();
+            }
+            else
+            {
+                if (core.IsSuspended)
+                    core.Resume();
+
+                core.MemoryUsageTargetLevel = WindowState == FormWindowState.Minimized
+                    ? CoreWebView2MemoryUsageTargetLevel.Low
+                    : CoreWebView2MemoryUsageTargetLevel.Normal;
+
+                SyncStateToWeb();
+            }
+        }
+        catch
+        {
+            // 挂起 / 低内存只是优化，失败不影响功能。
         }
     }
 
     private void ShowFromTray()
     {
-        ShowInTaskbar = true;
-        this.Show();
-        this.WindowState = FormWindowState.Normal;
-        this.Activate();
-        this.BringToFront();
+        if (webRuntimeMissing)
+        {
+            ShowWebView2Missing();
+            return;
+        }
+
+        Show();
+        WindowState = FormWindowState.Normal;
+        Activate();
+        BringToFront();
         SyncStateToWeb();
     }
 
     private void ExitApp()
     {
         reallyExit = true;
-        this.Close();
+        Close();
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -429,19 +537,35 @@ public class KeyboardLockForm : Form
         if (!reallyExit && !systemShutdown)
         {
             e.Cancel = true;
-            this.Hide();
+            Hide();
             return;
         }
 
-        isLocked = false;
-        dragTimer.Stop();
-        UninstallHook();
+        reallyExit = true;
+        KeyboardHook.HotkeyToggled -= OnHotkeyToggled;
+        KeyboardHook.Stop(); // 同时会解除锁定
 
+        // webView 是子控件，随窗体一起释放；以下几个不在控件树里，需要手动释放。
         if (tray != null)
         {
             tray.Visible = false;
             tray.Dispose();
             tray = null;
+        }
+        if (trayMenu != null)
+        {
+            trayMenu.Dispose();
+            trayMenu = null;
+        }
+        if (menuFontBold != null)
+        {
+            menuFontBold.Dispose();
+            menuFontBold = null;
+        }
+        if (menuFont != null)
+        {
+            menuFont.Dispose();
+            menuFont = null;
         }
 
         base.OnFormClosing(e);
@@ -449,7 +573,7 @@ public class KeyboardLockForm : Form
 
     protected override void WndProc(ref Message m)
     {
-        if (m.Msg == WM_APP_SHOW)
+        if ((m.Msg == Program.ShowInstanceMessage && m.Msg != 0) || m.Msg == WM_APP_SHOW)
         {
             ShowFromTray();
             return;
@@ -463,166 +587,159 @@ public class KeyboardLockForm : Form
 
         base.WndProc(ref m);
     }
-
-    private static bool IsCtrl(int vk)
-    {
-        return vk == VK_CONTROL || vk == VK_LCONTROL || vk == VK_RCONTROL;
-    }
-
-    private static bool IsAlt(int vk)
-    {
-        return vk == VK_MENU || vk == VK_LMENU || vk == VK_RMENU;
-    }
-
-    private static bool IsModifier(int vk)
-    {
-        return IsCtrl(vk) || IsAlt(vk)
-            || vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT
-            || vk == VK_LWIN || vk == VK_RWIN;
-    }
-
-    private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
-    {
-        if (nCode < 0 || current == null)
-            return CallNextHookEx(hookId, nCode, wParam, lParam);
-
-        try
-        {
-            int msg = wParam.ToInt32();
-            bool isDown = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
-            bool isUp = msg == WM_KEYUP || msg == WM_SYSKEYUP;
-
-            if (!isDown && !isUp)
-                return CallNextHookEx(hookId, nCode, wParam, lParam);
-
-            int vk = Marshal.ReadInt32(lParam);
-
-            if (IsCtrl(vk))
-                ctrlDown = isDown;
-            else if (IsAlt(vk))
-                altDown = isDown;
-
-            if (vk == VK_U)
-            {
-                if (isUp)
-                {
-                    uDown = false;
-                }
-                else if (!uDown)
-                {
-                    uDown = true;
-                    if (ctrlDown && altDown)
-                    {
-                        current.isLocked = !current.isLocked;
-                        if (current.IsHandleCreated)
-                        {
-                            current.BeginInvoke((MethodInvoker)delegate
-                            {
-                                current.OnLockStateChanged();
-                            });
-                        }
-                        return (IntPtr)1;
-                    }
-                }
-            }
-
-            if (IsModifier(vk))
-            {
-                if (isUp)
-                    return CallNextHookEx(hookId, nCode, wParam, lParam);
-                return current.isLocked ? (IntPtr)1 : CallNextHookEx(hookId, nCode, wParam, lParam);
-            }
-
-            if (current.isLocked)
-                return (IntPtr)1;
-
-            return CallNextHookEx(hookId, nCode, wParam, lParam);
-        }
-        catch
-        {
-            return CallNextHookEx(hookId, nCode, wParam, lParam);
-        }
-    }
 }
 
 internal static class Program
 {
-    private const int SW_RESTORE = 9;
-    private const int WM_APP_SHOW = 0x8000 + 1;
+    private static readonly IntPtr HWND_BROADCAST = new IntPtr(0xFFFF);
+    private const int ASFW_ANY = -1;
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern IntPtr FindWindowW(string lpClassName, string lpWindowName);
+    private static extern uint RegisterWindowMessageW(string lpString);
 
     [DllImport("user32.dll")]
     private static extern bool PostMessageW(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll")]
-    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    private static extern bool AllowSetForegroundWindow(int dwProcessId);
 
     [DllImport("user32.dll")]
-    private static extern bool SetForegroundWindow(IntPtr hWnd);
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    /// <summary>
+    /// 第二个实例用来唤醒第一个实例的系统级唯一消息。广播给所有顶层窗口（包括隐藏在托盘里的），
+    /// 不依赖窗口标题——同名的资源管理器文件夹窗口不会被误匹配——也不依赖 MainWindowHandle。
+    /// </summary>
+    internal static readonly int ShowInstanceMessage = (int)RegisterWindowMessageW("KeyboardLock.ShowInstance.{6F1C2A4E}");
+
+    internal static readonly string AppDataDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KeyboardLock");
 
     private static void ActivateExistingInstance()
     {
-        try
+        if (ShowInstanceMessage == 0)
+            return;
+
+        // 当前进程是用户刚双击启动的，持有前台权限；转交给第一个实例，它才能把窗口切到前台。
+        AllowSetForegroundWindow(ASFW_ANY);
+        PostMessageW(HWND_BROADCAST, ShowInstanceMessage, IntPtr.Zero, IntPtr.Zero);
+    }
+
+    private static readonly string[] EmbeddedDlls = new string[]
+    {
+        "WebView2Loader.dll",
+        "Microsoft.Web.WebView2.Core.dll",
+        "Microsoft.Web.WebView2.WinForms.dll"
+    };
+
+    private static readonly Dictionary<string, Assembly> resolvedAssemblies =
+        new Dictionary<string, Assembly>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 释放 WebView2 运行库所在的目录：%LocalAppData%\KeyboardLock\bin\&lt;构建标识&gt;。
+    /// 释放失败时为 null（此时托管程序集直接从内存加载，原生 Loader 退回到系统默认搜索路径）。
+    /// </summary>
+    internal static string NativeBinDir { get; private set; }
+
+    private static byte[] ReadEmbedded(Assembly asm, string fileName)
+    {
+        using (Stream s = asm.GetManifestResourceStream("KeyboardLock." + fileName))
         {
-            IntPtr h = FindWindowW(null, "键盘锁 — 已锁定");
-            if (h == IntPtr.Zero)
-                h = FindWindowW(null, "键盘锁");
-
-            if (h != IntPtr.Zero)
+            if (s == null)
+                return null;
+            using (MemoryStream ms = new MemoryStream())
             {
-                PostMessageW(h, WM_APP_SHOW, IntPtr.Zero, IntPtr.Zero);
-                return;
+                s.CopyTo(ms);
+                return ms.ToArray();
             }
-
-            int self = Process.GetCurrentProcess().Id;
-            foreach (Process p in Process.GetProcessesByName("KeyboardLock"))
-            {
-                if (p.Id == self)
-                    continue;
-
-                IntPtr wnd = p.MainWindowHandle;
-                if (wnd == IntPtr.Zero)
-                    continue;
-
-                ShowWindow(wnd, SW_RESTORE);
-                SetForegroundWindow(wnd);
-                return;
-            }
-        }
-        catch
-        {
         }
     }
 
-    private static void EnsurePhysicalDllsExtracted()
+    private static bool HasLength(string path, long length)
+    {
+        FileInfo fi = new FileInfo(path);
+        return fi.Exists && fi.Length == length;
+    }
+
+    private static void WriteAtomically(Stream source, string target)
+    {
+        // 先写临时文件再改名，避免中途断电/被杀留下半截 DLL。
+        string tmp = target + "." + Process.GetCurrentProcess().Id + ".tmp";
+        source.Position = 0;
+        using (FileStream fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
+            source.CopyTo(fs);
+        if (File.Exists(target))
+            File.Delete(target);
+        File.Move(tmp, target);
+    }
+
+    /// <summary>
+    /// 把 exe 内嵌的 3 个 WebView2 DLL 释放到用户可写的 %LocalAppData%：
+    /// 不依赖 exe 所在目录可写（Program Files、只读 U 盘也能用）。
+    /// 目录名取本 exe 的模块版本 ID（每次编译都不同），升级后自动换新目录、清掉旧目录；
+    /// 已释放过时只比较文件长度，既不哈希、也不把内嵌资源读进内存。
+    /// </summary>
+    private static void PrepareEmbeddedBinaries()
     {
         try
         {
-            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-            string[] dlls = new string[]
-            {
-                "WebView2Loader.dll",
-                "Microsoft.Web.WebView2.Core.dll",
-                "Microsoft.Web.WebView2.WinForms.dll"
-            };
             Assembly asm = Assembly.GetExecutingAssembly();
-            foreach (string dll in dlls)
-            {
-                string target = Path.Combine(baseDir, dll);
-                if (File.Exists(target))
-                    continue;
+            string tag = asm.ManifestModule.ModuleVersionId.ToString("N").Substring(0, 12);
+            string binRoot = Path.Combine(AppDataDir, "bin");
+            string dir = Path.Combine(binRoot, tag);
+            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
 
-                using (Stream s = asm.GetManifestResourceStream("KeyboardLock." + dll))
+            for (int i = 0; i < EmbeddedDlls.Length; i++)
+            {
+                using (Stream s = asm.GetManifestResourceStream("KeyboardLock." + EmbeddedDlls[i]))
                 {
-                    if (s != null)
+                    if (s == null)
+                        return; // 不是完整的单文件构建，交给系统默认搜索路径
+
+                    if (i == 0)
+                        Directory.CreateDirectory(dir);
+
+                    string target = Path.Combine(dir, EmbeddedDlls[i]);
+                    if (!HasLength(target, s.Length))
+                        WriteAtomically(s, target);
+
+                    // 旧版本留在 exe 旁边的散装同名 DLL 会被 CLR 优先加载；大小不一致时顺手更新。
+                    try
                     {
-                        using (FileStream fs = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.Read))
-                        {
-                            s.CopyTo(fs);
-                        }
+                        string local = Path.Combine(baseDir, EmbeddedDlls[i]);
+                        if (File.Exists(local) && !HasLength(local, s.Length))
+                            WriteAtomically(s, local);
                     }
+                    catch
+                    {
+                    }
+                }
+            }
+
+            NativeBinDir = dir;
+            CleanupOldBinDirs(binRoot, dir);
+        }
+        catch
+        {
+            NativeBinDir = null;
+        }
+    }
+
+    private static void CleanupOldBinDirs(string binRoot, string keep)
+    {
+        try
+        {
+            foreach (string d in Directory.GetDirectories(binRoot))
+            {
+                if (string.Equals(d, keep, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                try
+                {
+                    Directory.Delete(d, true);
+                }
+                catch
+                {
+                    // 可能正被别的进程占用，下次启动再清。
                 }
             }
         }
@@ -636,26 +753,36 @@ internal static class Program
         try
         {
             string shortName = new AssemblyName(args.Name).Name;
-            string localPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, shortName + ".dll");
-            if (File.Exists(localPath))
-                return Assembly.LoadFrom(localPath);
+            string fileName = shortName + ".dll";
+            if (Array.IndexOf(EmbeddedDlls, fileName) < 0)
+                return null;
 
-            Assembly asm = Assembly.GetExecutingAssembly();
-            using (Stream s = asm.GetManifestResourceStream("KeyboardLock." + shortName + ".dll"))
+            lock (resolvedAssemblies)
             {
-                if (s == null)
-                    return null;
+                // 同一个程序集可能被多次请求（主程序、WinForms 包各一次），必须返回同一个实例，
+                // 否则内存加载会出现两份 Core，类型互不兼容。
+                Assembly cached;
+                if (resolvedAssemblies.TryGetValue(shortName, out cached))
+                    return cached;
 
-                byte[] raw = new byte[s.Length];
-                int read = 0;
-                while (read < raw.Length)
+                Assembly loaded = null;
+                if (NativeBinDir != null)
                 {
-                    int n = s.Read(raw, read, raw.Length - read);
-                    if (n <= 0)
-                        break;
-                    read += n;
+                    string path = Path.Combine(NativeBinDir, fileName);
+                    if (File.Exists(path))
+                        loaded = Assembly.LoadFrom(path);
                 }
-                return Assembly.Load(raw);
+
+                if (loaded == null)
+                {
+                    byte[] raw = ReadEmbedded(Assembly.GetExecutingAssembly(), fileName);
+                    if (raw != null)
+                        loaded = Assembly.Load(raw);
+                }
+
+                if (loaded != null)
+                    resolvedAssemblies[shortName] = loaded;
+                return loaded;
             }
         }
         catch
@@ -667,6 +794,17 @@ internal static class Program
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void RunApp()
     {
+        if (NativeBinDir != null)
+        {
+            try
+            {
+                CoreWebView2Environment.SetLoaderDllFolderPath(NativeBinDir);
+            }
+            catch
+            {
+            }
+        }
+
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         KeyboardLockForm form = new KeyboardLockForm();
@@ -689,7 +827,7 @@ internal static class Program
                 return;
             }
 
-            EnsurePhysicalDllsExtracted();
+            PrepareEmbeddedBinaries();
             RunApp();
         }
     }

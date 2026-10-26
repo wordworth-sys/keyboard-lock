@@ -12,7 +12,7 @@
     html, body {
       width: 400px;
       height: 264px;
-      background: transparent;
+      background: #d3d9e2;
       font-family: var(--font-ui);
       overflow: hidden;
     }
@@ -35,10 +35,6 @@
         inset -1.5px 0 0 rgba(255, 255, 255, 0.75);
       overflow: hidden;
     }
-    .chassis::before {
-      content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0.06; mix-blend-mode: overlay;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.95' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-    }
     .titlebar {
       position: relative; z-index: 2; height: 36px; padding: 0 14px;
       display: flex; align-items: center; justify-content: space-between; cursor: move;
@@ -46,19 +42,47 @@
       border-bottom: 1px solid #828b98;
       box-shadow: inset 0 1.5px 0 rgba(255,255,255,0.98), 0 1px 0 rgba(255,255,255,0.85);
     }
-    .traffic-lights { display: flex; align-items: center; gap: 8px; width: 52px; cursor: default; }
-    .aqua-dot {
-      position: relative; width: 12px; height: 12px; border-radius: 50%; cursor: pointer;
-      box-shadow: 0 1px 0 rgba(255,255,255,0.9), inset 0 1px 1.5px rgba(0,0,0,0.5);
-    }
-    .aqua-dot::after {
-      content: ""; position: absolute; top: 1.5px; left: 2.5px; width: 7px; height: 4px; border-radius: 50%;
-      background: linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.12) 100%);
-    }
-    .aqua-dot.red { background: radial-gradient(circle at 50% 85%, #ff8a80 0%, #e53935 55%, #8e1412 100%); border: 1px solid #731816; }
-    .aqua-dot.yellow { background: radial-gradient(circle at 50% 85%, #ffe57f 0%, #f9a825 55%, #8c5808 100%); border: 1px solid #754b09; }
     .window-title { font-size: 13px; font-weight: 700; color: #242a32; letter-spacing: 0.03em; text-shadow: 0 1px 0 rgba(255,255,255,0.88); pointer-events: none; }
-    .model-tag { width: 52px; text-align: right; font-family: var(--font-mono); font-size: 10px; font-weight: 700; color: #545d68; text-shadow: 0 1px 0 rgba(255,255,255,0.82); pointer-events: none; }
+    .model-tag { width: 60px; text-align: left; font-family: var(--font-mono); font-size: 10px; font-weight: 700; color: #545d68; text-shadow: 0 1px 0 rgba(255,255,255,0.82); pointer-events: none; }
+
+    /* 窗口控制：一条下沉的铝槽里嵌两颗微型键帽（– 最小化 / × 收进托盘） */
+    .titlebar-side { width: 60px; display: flex; justify-content: flex-end; }
+    .win-controls {
+      display: flex; align-items: center; gap: 2px; padding: 2px; border-radius: 7px; cursor: default;
+      background: linear-gradient(180deg, #7a8492 0%, #9aa4b2 100%);
+      border-top: 1px solid #5a626e; border-bottom: 1px solid rgba(255,255,255,0.9);
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.45);
+    }
+    .win-btn {
+      position: relative; width: 24px; height: 18px; padding: 0; border-radius: 5px; cursor: pointer; outline: none;
+      display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(180deg, #fbfcfe 0%, #e3e8ef 60%, #c9d0da 100%);
+      border: 1px solid #4a525e;
+      box-shadow: inset 0 1px 0 #ffffff, inset 0 -1.5px 0 #aab3c0, 0 1px 1.5px rgba(0,0,0,0.28);
+      transition: background 0.12s, box-shadow 0.12s, border-color 0.12s;
+    }
+    .win-btn svg {
+      width: 10px; height: 10px; fill: none; stroke: #343b45; stroke-width: 1.6; stroke-linecap: round;
+      filter: drop-shadow(0 1px 0 rgba(255,255,255,0.9));
+    }
+    .win-btn:hover { background: linear-gradient(180deg, #ffffff 0%, #eef1f5 60%, #d6dce5 100%); }
+    .win-btn:active {
+      transform: translateY(1px);
+      background: linear-gradient(180deg, #d9dfe7 0%, #e6eaf0 100%);
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.3);
+    }
+    .win-btn:focus-visible { border-color: #2c6fd6; }
+    .win-btn.close:hover {
+      background: linear-gradient(180deg, #e0523b 0%, #c83a24 58%, #ab2a16 100%);
+      border-color: #3d0f07;
+      box-shadow: inset 0 1px 0 rgba(255,220,210,0.7), inset 0 -1.5px 0 #7a190a, 0 1px 1.5px rgba(0,0,0,0.3);
+    }
+    .win-btn.close:active {
+      background: linear-gradient(180deg, #a92915 0%, #c2361f 100%);
+      border-color: #3d0f07;
+      box-shadow: inset 0 1px 2px rgba(60,8,2,0.55);
+    }
+    .win-btn.close:hover svg, .win-btn.close:active svg { stroke: #ffffff; filter: drop-shadow(0 -1px 0 rgba(90,15,5,0.8)); }
 
     .panel-body { position: relative; z-index: 2; padding: 15px 18px; display: flex; flex-direction: column; gap: 13px; }
     .recessed-module {
@@ -141,6 +165,16 @@
       box-shadow: inset 0 1.5px 0 rgba(255, 220, 210, 0.7), inset 0 -3.5px 0 #7a190a, 0 3px 5px rgba(0,0,0,0.4);
     }
 
+    /* 键盘钩子安装失败：琥珀色警示灯，锁定操作全部禁用 */
+    .chassis.is-unavailable .recessed-module { cursor: not-allowed; }
+    .chassis.is-unavailable .led-lens {
+      background: radial-gradient(circle at 50% 65%, #fde68a 0%, #f59e0b 45%, #92400e 85%, #451a03 100%);
+      box-shadow: 0 0 7px rgba(245, 158, 11, 0.9), 0 0 16px rgba(245, 158, 11, 0.5);
+    }
+    .chassis.is-unavailable .status-en { color: #fcd34d; }
+    .main-action-btn:disabled { cursor: not-allowed; color: #7a828d; }
+    .main-action-btn:disabled:active { transform: none; box-shadow: inset 0 1.5px 0 #ffffff, inset 0 -3.5px 0 #b0b9c6, 0 3px 5px rgba(0,0,0,0.36); }
+
     .bottom-footer { display: flex; align-items: center; justify-content: space-between; }
     .shortcut-group { display: flex; align-items: center; gap: 5px; }
     .keycap-well {
@@ -167,12 +201,18 @@
 <body>
   <div class="chassis" id="chassis">
     <div class="titlebar" id="titlebar">
-      <div class="traffic-lights">
-        <div class="aqua-dot red" id="btnClose" title="关闭并最小化到托盘"></div>
-        <div class="aqua-dot yellow" id="btnMinimize" title="最小化"></div>
-      </div>
-      <div class="window-title" id="windowTitle">键盘锁</div>
       <div class="model-tag">ALU-01</div>
+      <div class="window-title" id="windowTitle">键盘锁</div>
+      <div class="titlebar-side">
+        <div class="win-controls">
+          <button class="win-btn minimize" id="btnMinimize" type="button" title="最小化" aria-label="最小化">
+            <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 5.5h7"/></svg>
+          </button>
+          <button class="win-btn close" id="btnClose" type="button" title="关闭到托盘（右键托盘图标可完全退出）" aria-label="关闭到托盘">
+            <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2l6 6M8 2l-6 6"/></svg>
+          </button>
+        </div>
+      </div>
     </div>
     <div class="panel-body">
       <div class="recessed-module" id="toggleBay">
@@ -210,23 +250,36 @@
 
   <script>
     let isLocked = false;
+    let isAvailable = true;
     const chassis = document.getElementById('chassis');
     const statusCn = document.getElementById('statusCn');
     const statusEn = document.getElementById('statusEn');
+    const btnToggle = document.getElementById('btnToggle');
     const btnText = document.getElementById('btnText');
     const windowTitle = document.getElementById('windowTitle');
 
     function sendCommand(cmd) {
+      if (cmd === 'toggle' && !isAvailable) return;
       if (window.chrome && window.chrome.webview) {
-        window.chrome.webview.postMessage({ command: cmd });
+        window.chrome.webview.postMessage(cmd);
       } else if (cmd === 'toggle') {
-        renderState(!isLocked);
+        renderState(!isLocked, true);
       }
     }
 
-    function renderState(locked) {
+    function renderState(locked, available) {
       isLocked = !!locked;
+      isAvailable = available !== false;
       chassis.classList.toggle('is-locked', isLocked);
+      chassis.classList.toggle('is-unavailable', !isAvailable);
+      btnToggle.disabled = !isAvailable;
+      if (!isAvailable) {
+        statusCn.textContent = '不可用';
+        statusEn.textContent = 'HOOK FAILED';
+        btnText.textContent = '键盘钩子安装失败';
+        windowTitle.textContent = '键盘锁';
+        return;
+      }
       statusCn.textContent = isLocked ? '已锁定' : '未锁定';
       statusEn.textContent = isLocked ? 'LOCKED' : 'UNLOCKED';
       btnText.textContent = isLocked ? '解锁键盘' : '锁定键盘';
@@ -238,14 +291,15 @@
     document.getElementById('btnClose').addEventListener('click', (e) => { e.stopPropagation(); sendCommand('hide'); });
     document.getElementById('btnMinimize').addEventListener('click', (e) => { e.stopPropagation(); sendCommand('minimize'); });
     document.getElementById('titlebar').addEventListener('mousedown', (e) => {
-      if (!e.target.closest('.traffic-lights')) sendCommand('drag');
+      if (e.button !== 0 || e.target.closest('.win-controls')) return;
+      sendCommand('drag');
     });
 
     if (window.chrome && window.chrome.webview) {
       window.chrome.webview.addEventListener('message', event => {
         const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
         if (data && typeof data.locked !== 'undefined') {
-          renderState(data.locked);
+          renderState(data.locked, data.available);
         }
       });
     }

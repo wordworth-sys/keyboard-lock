@@ -29,12 +29,14 @@ $uiHtml = Join-Path $root 'src\ui.html'
     "/resource:$wvCore,KeyboardLock.Microsoft.Web.WebView2.Core.dll" `
     "/resource:$wvWinForms,KeyboardLock.Microsoft.Web.WebView2.WinForms.dll" `
     "/resource:$wvLoader,KeyboardLock.WebView2Loader.dll" `
-    "$root\src\KeyboardLock.cs" "$root\src\AssemblyInfo.cs"
+    /warn:4 `
+    "$root\src\KeyFilter.cs" "$root\src\KeyboardHook.cs" "$root\src\KeyboardLock.cs" "$root\src\AssemblyInfo.cs"
 
 if ($LASTEXITCODE -ne 0) {
     throw "csc failed with exit code $LASTEXITCODE"
 }
 
-Copy-Item -Force $wvCore, $wvWinForms, $wvLoader, $uiHtml -Destination $dist
+# Clean up legacy loose files in dist (all resources are embedded into the single KeyboardLock.exe)
+Remove-Item -Path "$dist\ui.html", "$dist\Microsoft.Web.WebView2.Core.dll", "$dist\Microsoft.Web.WebView2.WinForms.dll", "$dist\WebView2Loader.dll" -ErrorAction SilentlyContinue
 
 Write-Host "Built: $dist\KeyboardLock.exe"
