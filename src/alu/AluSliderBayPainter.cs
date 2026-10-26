@@ -1,0 +1,87 @@
+using System;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+
+namespace KeyboardLock.Alu
+{
+    /// <summary>
+    /// 机械滑块槽：拉丝导轨、FREE / HOLD 刻度、可滑动的 LOCK 滑块。
+    /// 滑块位置直接由锁定状态决定（未锁定在左、已锁定在右）。
+    /// </summary>
+    internal static class AluSliderBayPainter
+    {
+        public static void Draw(Graphics g, AluMetrics m, AluFonts fonts, AluPanelState state)
+        {
+            RectangleF bay = m.SliderBay;
+
+            // 导轨底色 + 机械拉丝条纹
+            AluSurface.FillVerticalGradient(
+                g, bay,
+                new Color[] { AluPalette.RailTop, AluPalette.RailBottom },
+                new float[] { 0f, 1f });
+
+            AluSurface.FillVerticalStripes(g, bay, AluPalette.RailStripeLight, AluPalette.RailStripeDark,
+                4f * m.Scale, 2f * m.Scale);
+
+            AluSurface.DrawInnerShadowTop(g, bay, m.BayRadiusPx, AluPalette.Alpha("#000000", 0.95), 5f * m.Scale);
+
+            // 刻度文字（滑块会盖住其中一侧）
+            float labelY = m.Rail.Top + (m.Rail.Height - 12f * m.Scale) / 2f;
+            RectangleF freeRect = new RectangleF(m.Rail.Left + 8f * m.Scale, labelY, 60f * m.Scale, 12f * m.Scale);
+            RectangleF holdRect = new RectangleF(m.Rail.Right - 68f * m.Scale, labelY, 60f * m.Scale, 12f * m.Scale);
+
+            AluText.Draw(g, "FREE", fonts.RailLabel, AluPalette.RailLabel, freeRect, AluTextAlign.Left, 0f, Color.Transparent, 0f);
+            AluText.Draw(g, "HOLD", fonts.RailLabel, AluPalette.RailLabel, holdRect, AluTextAlign.Right, 0f, Color.Transparent, 0f);
+
+            // 滑块
+            RectangleF thumb = state == AluPanelState.Locked ? m.ThumbHold : m.ThumbFree;
+            DrawThumb(g, m, fonts, thumb);
+        }
+
+        private static void DrawThumb(Graphics g, AluMetrics m, AluFonts fonts, RectangleF thumb)
+        {
+            float radius = m.ThumbRadiusPx;
+
+            AluSurface.DrawDropShadow(g, thumb, radius, AluPalette.Alpha("#000000", 0.80), 3f * m.Scale, 6f * m.Scale);
+
+            AluSurface.FillVerticalGradient(
+                g, thumb,
+                new Color[] { AluPalette.ThumbTop, AluPalette.ThumbMid, AluPalette.ThumbBottom },
+                new float[] { 0f, 0.56f, 1f });
+
+            AluSurface.DrawInnerTopLight(g, thumb, radius, AluPalette.Alpha("#FFFFFF", 0.95), 1.5f * m.Scale);
+            AluSurface.DrawInnerBottomEdge(g, thumb, radius, AluPalette.ThumbInset, 3f * m.Scale);
+
+            using (Pen pen = new Pen(AluPalette.ThumbBorder, 1f))
+                AluSurface.DrawRounded(g, thumb, radius, pen);
+
+            // 左侧的 LOCK 铭牌
+            RectangleF label = new RectangleF(
+                thumb.Left + 10f * m.Scale,
+                thumb.Top,
+                thumb.Width * 0.6f,
+                thumb.Height);
+            AluText.Draw(g, "LOCK", fonts.ThumbLabel, AluPalette.ThumbText, label,
+                AluTextAlign.Left, 0f, AluPalette.Alpha("#FFFFFF", 0.95), 1f);
+
+            // 右侧的防滑棱
+            float ridgeWidth = 2f * m.Scale;
+            float ridgeGap = 3f * m.Scale;
+            float ridgeHeight = 22f * m.Scale;
+            float ridgeRight = thumb.Right - 10f * m.Scale;
+            float startX = ridgeRight - (3f * ridgeWidth + 2f * ridgeGap);
+
+            using (SolidBrush ridgeBrush = new SolidBrush(AluPalette.GripRidge))
+            using (SolidBrush highlightBrush = new SolidBrush(AluPalette.Alpha("#FFFFFF", 0.95)))
+            {
+                for (int i = 0; i < 3; i++)
+                {
+                    float x = startX + i * (ridgeWidth + ridgeGap);
+                    float y = thumb.Top + (thumb.Height - ridgeHeight) / 2f;
+                    g.FillRectangle(ridgeBrush, x, y, ridgeWidth, ridgeHeight);
+                    g.FillRectangle(highlightBrush, x + ridgeWidth, y, 1f * m.Scale, ridgeHeight);
+                }
+            }
+        }
+    }
+}

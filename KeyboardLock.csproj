@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    与 build.ps1（csc.exe 直编）编译同一套源码：
+      · build.ps1 产出单文件发行版，不依赖任何 SDK；
+      · 本工程提供 `dotnet build` / IDE 调试入口。
+    两边共用 src\ 下的源码，界面全部由 GDI+ 自绘，不依赖 WebView2。
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>KeyboardLock</AssemblyName>
+    <RootNamespace>KeyboardLock</RootNamespace>
+    <!-- 版本信息统一由 src\AssemblyInfo.cs 提供 -->
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <!-- 与 csc.exe（.NET Framework 4.x 的编译器）保持同一语言版本 -->
+    <LangVersion>5</LangVersion>
+    <ApplicationIcon>assets\icon.ico</ApplicationIcon>
+    <ApplicationManifest>src\app.manifest</ApplicationManifest>
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <DebugType>none</DebugType>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- net48 参考程序集：本机只装了 v4.8.1，用 NuGet 包拿到 4.8 的引用程序集 -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 测试是独立可执行文件（tests\run-tests.ps1），不进主工程 -->
+    <Compile Remove="tests\**" />
+    <None Remove="tests\**" />
+  </ItemGroup>
+
+</Project>

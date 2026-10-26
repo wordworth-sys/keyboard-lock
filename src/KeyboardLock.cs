@@ -1,18 +1,11 @@
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
 using System.Drawing;
-using System.IO;
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 
-using Microsoft.Web.WebView2.Core;
-using Microsoft.Web.WebView2.WinForms;
+using KeyboardLock.Alu;
 
 public class KeyboardLockForm : Form
 {
@@ -28,9 +21,6 @@ public class KeyboardLockForm : Form
 
     private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
     private static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
-
-    // 微软官方 WebView2 Runtime（Evergreen）在线安装包。
-    private const string WebView2DownloadUrl = "https://go.microsoft.com/fwlink/p/?LinkId=2124703";
 
     [DllImport("user32.dll")]
     private static extern bool ReleaseCapture();
@@ -59,10 +49,8 @@ public class KeyboardLockForm : Form
     private bool hookAvailable;
     private int hookError;
     private bool reallyExit;
-    private bool webReady;
-    private bool webRuntimeMissing;
 
-    private WebView2 webView;
+    private AluPanelView panelView;
     private NotifyIcon tray;
     private ContextMenuStrip trayMenu;
     private ToolStripMenuItem mnuToggle;
@@ -106,6 +94,21 @@ public class KeyboardLockForm : Form
 
         KeyboardHook.HotkeyToggled += OnHotkeyToggled;
         Shown += OnFormShown;
+
+        panelView = new AluPanelView();
+        panelView.Dock = DockStyle.Fill;
+        panelView.ToggleRequested += delegate { ToggleLock(); };
+        panelView.MinimizeRequested += delegate { WindowState = FormWindowState.Minimized; };
+        panelView.CloseToTrayRequested += delegate { Hide(); };
+        panelView.DragRequested += delegate { StartWindowDrag(); };
+        Controls.Add(panelView);
+    }
+
+    /// <summary>用系统原生移动循环拖动窗口（按住 ESC 可取消）。</summary>
+    private void StartWindowDrag()
+    {
+        ReleaseCapture();
+        SendMessage(Handle, WM_NCLBUTTONDOWN, HTCAPTION, 0);
     }
 
     private static float GetSystemDpiScale()
@@ -224,185 +227,15 @@ public class KeyboardLockForm : Form
             MessageBoxIcon.Warning);
     }
 
-    private async void OnFormShown(object sender, EventArgs e)
+    private void OnFormShown(object sender, EventArgs e)
     {
         if (tray == null)
             CreateTray();
 
-        await InitWebViewAsync();
+        UpdatePanelState();
 
         if (!hookAvailable)
             ShowHookError();
-    }
-
-    private static bool IsWebView2RuntimeInstalled()
-    {
-        try
-        {
-            return !string.IsNullOrEmpty(CoreWebView2Environment.GetAvailableBrowserVersionString());
-        }
-        catch
-        {
-            // WebView2RuntimeNotFoundException 或 Loader 加载失败：都按“不可用”处理。
-            return false;
-        }
-    }
-
-    private void ShowWebView2Missing()
-    {
-        DialogResult r = MessageBox.Show(
-            this,
-            "界面需要 Microsoft Edge WebView2 Runtime，本机没有安装。\n" +
-            "（Windows 10 / 11 绝大多数已自带，精简版 / LTSC 系统可能没有。）\n\n" +
-            "锁定功能不受影响：可以用 Ctrl+Alt+U，或右键托盘图标锁定 / 解锁 / 退出。\n\n" +
-            "是否现在打开微软官方下载？安装后重新启动本程序即可。",
-            "键盘锁",
-            MessageBoxButtons.YesNo,
-            MessageBoxIcon.Information);
-
-        if (r == DialogResult.Yes)
-        {
-            try
-            {
-                Process.Start(WebView2DownloadUrl);
-            }
-            catch
-            {
-            }
-        }
-    }
-
-    private async Task InitWebViewAsync()
-    {
-        if (!IsWebView2RuntimeInstalled())
-        {
-            // 没有运行时就没有界面：收进托盘，只保留快捷键和托盘菜单，不留一块空白窗口。
-            webRuntimeMissing = true;
-            ShowWebView2Missing();
-            Hide();
-            return;
-        }
-
-        try
-        {
-            webView = new WebView2();
-            webView.Dock = DockStyle.Fill;
-            // 与窗体同色的不透明背景：免去透明合成，加载前也不会闪白。
-            webView.DefaultBackgroundColor = BackColor;
-            webView.AllowExternalDrop = false;
-            Controls.Add(webView);
-
-            string userDataDir = Path.Combine(Program.AppDataDir, "webview");
-            CoreWebView2Environment env = await CoreWebView2Environment.CreateAsync(null, userDataDir);
-            await webView.EnsureCoreWebView2Async(env);
-
-            CoreWebView2 core = webView.CoreWebView2;
-            CoreWebView2Settings s = core.Settings;
-            s.AreDefaultContextMenusEnabled = false;
-            s.AreDevToolsEnabled = false;
-            s.IsStatusBarEnabled = false;
-            s.IsZoomControlEnabled = false;
-            s.AreBrowserAcceleratorKeysEnabled = false; // F5 / Ctrl+P / Ctrl+F 等浏览器快捷键对这个面板没有意义
-
-            core.WebMessageReceived += OnWebMessageReceived;
-            core.NavigationCompleted += OnNavigationCompleted;
-            core.ProcessFailed += OnWebProcessFailed;
-
-            core.NavigateToString(LoadUiHtml());
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(this, "界面初始化失败：" + ex.Message, "键盘锁", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-    }
-
-    private void OnNavigationCompleted(object sender, CoreWebView2NavigationCompletedEventArgs e)
-    {
-        webReady = true;
-        SyncStateToWeb();
-    }
-
-    private void OnWebProcessFailed(object sender, CoreWebView2ProcessFailedEventArgs e)
-    {
-        // 渲染进程崩溃时页面会停在旧状态，界面可能显示“未锁定”而键盘其实锁着——必须重建并重新同步。
-        webReady = false;
-
-        if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited)
-        {
-            if (!reallyExit && !IsDisposed)
-                BeginInvoke((MethodInvoker)RecreateWebView);
-        }
-        else if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessExited
-            || e.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessUnresponsive)
-        {
-            try
-            {
-                webView.CoreWebView2.NavigateToString(LoadUiHtml()); // NavigationCompleted 会重新同步状态
-            }
-            catch
-            {
-            }
-        }
-    }
-
-    private async void RecreateWebView()
-    {
-        if (webView != null)
-        {
-            Controls.Remove(webView);
-            webView.Dispose();
-            webView = null;
-        }
-
-        if (!reallyExit && !IsDisposed)
-            await InitWebViewAsync();
-    }
-
-    private static string LoadUiHtml()
-    {
-        // 只使用编译时嵌入的界面，避免 exe 旁边残留的旧 ui.html 覆盖新版本。
-        // 调试界面时可以直接用浏览器打开 src/ui.html（脚本自带离线回退）。
-        Assembly asm = Assembly.GetExecutingAssembly();
-        using (Stream s = asm.GetManifestResourceStream("KeyboardLock.ui.html"))
-        {
-            if (s != null)
-            {
-                using (StreamReader r = new StreamReader(s, Encoding.UTF8))
-                    return r.ReadToEnd();
-            }
-        }
-        return "<html><body>UI missing</body></html>";
-    }
-
-    private void OnWebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)
-    {
-        string command;
-        try
-        {
-            command = e.TryGetWebMessageAsString();
-        }
-        catch (ArgumentException)
-        {
-            return; // 页面只发送纯字符串命令，其余一律忽略
-        }
-
-        switch (command)
-        {
-            case "toggle":
-                ToggleLock();
-                break;
-            case "hide":
-                Hide();
-                break;
-            case "minimize":
-                WindowState = FormWindowState.Minimized;
-                break;
-            case "drag":
-                // 交给系统的原生移动循环：SendMessage 会一直阻塞到松开鼠标（或按 ESC 取消）。
-                ReleaseCapture();
-                SendMessage(Handle, WM_NCLBUTTONDOWN, HTCAPTION, 0);
-                break;
-        }
     }
 
     private void ToggleLock()
@@ -437,88 +270,28 @@ public class KeyboardLockForm : Form
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         }
 
-        SyncStateToWeb();
+        UpdatePanelState();
     }
 
-    private void SyncStateToWeb()
+    /// <summary>把当前锁定状态同步到自绘面板。</summary>
+    private void UpdatePanelState()
     {
-        // 窗口隐藏时页面处于挂起状态，不去唤醒它；重新显示时会再同步一次。
-        if (!webReady || !Visible || webView == null || webView.CoreWebView2 == null)
+        if (panelView == null)
             return;
 
-        try
-        {
-            webView.CoreWebView2.PostWebMessageAsJson(
-                "{\"locked\":" + (KeyboardHook.IsLocked ? "true" : "false") +
-                ",\"available\":" + (hookAvailable ? "true" : "false") + "}");
-        }
-        catch
-        {
-            webReady = false; // 通道已失效，等 ProcessFailed 重建后由 NavigationCompleted 恢复
-        }
-    }
-
-    protected override void OnVisibleChanged(EventArgs e)
-    {
-        base.OnVisibleChanged(e);
-        UpdateWebViewActivity();
-    }
-
-    protected override void OnResize(EventArgs e)
-    {
-        base.OnResize(e);
-        UpdateWebViewActivity();
-    }
-
-    /// <summary>
-    /// 收进托盘：挂起 WebView2 渲染进程（停止一切调度并释放内存）；
-    /// 最小化：请求低内存模式；重新显示：恢复并同步状态。键盘钩子在独立线程上，完全不受影响。
-    /// </summary>
-    private async void UpdateWebViewActivity()
-    {
-        if (webView == null || webView.CoreWebView2 == null)
-            return;
-
-        CoreWebView2 core = webView.CoreWebView2;
-        try
-        {
-            if (!Visible)
-            {
-                // 窗体隐藏后 WebView2 控件已自动置 IsVisible = false，满足挂起条件。
-                if (!core.IsSuspended)
-                    await core.TrySuspendAsync();
-            }
-            else
-            {
-                if (core.IsSuspended)
-                    core.Resume();
-
-                core.MemoryUsageTargetLevel = WindowState == FormWindowState.Minimized
-                    ? CoreWebView2MemoryUsageTargetLevel.Low
-                    : CoreWebView2MemoryUsageTargetLevel.Normal;
-
-                SyncStateToWeb();
-            }
-        }
-        catch
-        {
-            // 挂起 / 低内存只是优化，失败不影响功能。
-        }
+        if (!hookAvailable)
+            panelView.State = AluPanelState.Unavailable;
+        else
+            panelView.State = KeyboardHook.IsLocked ? AluPanelState.Locked : AluPanelState.Unlocked;
     }
 
     private void ShowFromTray()
     {
-        if (webRuntimeMissing)
-        {
-            ShowWebView2Missing();
-            return;
-        }
-
         Show();
         WindowState = FormWindowState.Normal;
         Activate();
         BringToFront();
-        SyncStateToWeb();
+        UpdatePanelState();
     }
 
     private void ExitApp()
@@ -545,7 +318,7 @@ public class KeyboardLockForm : Form
         KeyboardHook.HotkeyToggled -= OnHotkeyToggled;
         KeyboardHook.Stop(); // 同时会解除锁定
 
-        // webView 是子控件，随窗体一起释放；以下几个不在控件树里，需要手动释放。
+        // 托盘图标与菜单不在控件树里，需要手动释放。
         if (tray != null)
         {
             tray.Visible = false;
@@ -612,9 +385,6 @@ internal static class Program
     /// </summary>
     internal static readonly int ShowInstanceMessage = (int)RegisterWindowMessageW("KeyboardLock.ShowInstance.{6F1C2A4E}");
 
-    internal static readonly string AppDataDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KeyboardLock");
-
     private static void ActivateExistingInstance()
     {
         if (ShowInstanceMessage == 0)
@@ -625,186 +395,9 @@ internal static class Program
         PostMessageW(HWND_BROADCAST, ShowInstanceMessage, IntPtr.Zero, IntPtr.Zero);
     }
 
-    private static readonly string[] EmbeddedDlls = new string[]
-    {
-        "WebView2Loader.dll",
-        "Microsoft.Web.WebView2.Core.dll",
-        "Microsoft.Web.WebView2.WinForms.dll"
-    };
-
-    private static readonly Dictionary<string, Assembly> resolvedAssemblies =
-        new Dictionary<string, Assembly>(StringComparer.OrdinalIgnoreCase);
-
-    /// <summary>
-    /// 释放 WebView2 运行库所在的目录：%LocalAppData%\KeyboardLock\bin\&lt;构建标识&gt;。
-    /// 释放失败时为 null（此时托管程序集直接从内存加载，原生 Loader 退回到系统默认搜索路径）。
-    /// </summary>
-    internal static string NativeBinDir { get; private set; }
-
-    private static byte[] ReadEmbedded(Assembly asm, string fileName)
-    {
-        using (Stream s = asm.GetManifestResourceStream("KeyboardLock." + fileName))
-        {
-            if (s == null)
-                return null;
-            using (MemoryStream ms = new MemoryStream())
-            {
-                s.CopyTo(ms);
-                return ms.ToArray();
-            }
-        }
-    }
-
-    private static bool HasLength(string path, long length)
-    {
-        FileInfo fi = new FileInfo(path);
-        return fi.Exists && fi.Length == length;
-    }
-
-    private static void WriteAtomically(Stream source, string target)
-    {
-        // 先写临时文件再改名，避免中途断电/被杀留下半截 DLL。
-        string tmp = target + "." + Process.GetCurrentProcess().Id + ".tmp";
-        source.Position = 0;
-        using (FileStream fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
-            source.CopyTo(fs);
-        if (File.Exists(target))
-            File.Delete(target);
-        File.Move(tmp, target);
-    }
-
-    /// <summary>
-    /// 把 exe 内嵌的 3 个 WebView2 DLL 释放到用户可写的 %LocalAppData%：
-    /// 不依赖 exe 所在目录可写（Program Files、只读 U 盘也能用）。
-    /// 目录名取本 exe 的模块版本 ID（每次编译都不同），升级后自动换新目录、清掉旧目录；
-    /// 已释放过时只比较文件长度，既不哈希、也不把内嵌资源读进内存。
-    /// </summary>
-    private static void PrepareEmbeddedBinaries()
-    {
-        try
-        {
-            Assembly asm = Assembly.GetExecutingAssembly();
-            string tag = asm.ManifestModule.ModuleVersionId.ToString("N").Substring(0, 12);
-            string binRoot = Path.Combine(AppDataDir, "bin");
-            string dir = Path.Combine(binRoot, tag);
-            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-
-            for (int i = 0; i < EmbeddedDlls.Length; i++)
-            {
-                using (Stream s = asm.GetManifestResourceStream("KeyboardLock." + EmbeddedDlls[i]))
-                {
-                    if (s == null)
-                        return; // 不是完整的单文件构建，交给系统默认搜索路径
-
-                    if (i == 0)
-                        Directory.CreateDirectory(dir);
-
-                    string target = Path.Combine(dir, EmbeddedDlls[i]);
-                    if (!HasLength(target, s.Length))
-                        WriteAtomically(s, target);
-
-                    // 旧版本留在 exe 旁边的散装同名 DLL 会被 CLR 优先加载；大小不一致时顺手更新。
-                    try
-                    {
-                        string local = Path.Combine(baseDir, EmbeddedDlls[i]);
-                        if (File.Exists(local) && !HasLength(local, s.Length))
-                            WriteAtomically(s, local);
-                    }
-                    catch
-                    {
-                    }
-                }
-            }
-
-            NativeBinDir = dir;
-            CleanupOldBinDirs(binRoot, dir);
-        }
-        catch
-        {
-            NativeBinDir = null;
-        }
-    }
-
-    private static void CleanupOldBinDirs(string binRoot, string keep)
-    {
-        try
-        {
-            foreach (string d in Directory.GetDirectories(binRoot))
-            {
-                if (string.Equals(d, keep, StringComparison.OrdinalIgnoreCase))
-                    continue;
-                try
-                {
-                    Directory.Delete(d, true);
-                }
-                catch
-                {
-                    // 可能正被别的进程占用，下次启动再清。
-                }
-            }
-        }
-        catch
-        {
-        }
-    }
-
-    private static Assembly ResolveEmbeddedAssembly(object sender, ResolveEventArgs args)
-    {
-        try
-        {
-            string shortName = new AssemblyName(args.Name).Name;
-            string fileName = shortName + ".dll";
-            if (Array.IndexOf(EmbeddedDlls, fileName) < 0)
-                return null;
-
-            lock (resolvedAssemblies)
-            {
-                // 同一个程序集可能被多次请求（主程序、WinForms 包各一次），必须返回同一个实例，
-                // 否则内存加载会出现两份 Core，类型互不兼容。
-                Assembly cached;
-                if (resolvedAssemblies.TryGetValue(shortName, out cached))
-                    return cached;
-
-                Assembly loaded = null;
-                if (NativeBinDir != null)
-                {
-                    string path = Path.Combine(NativeBinDir, fileName);
-                    if (File.Exists(path))
-                        loaded = Assembly.LoadFrom(path);
-                }
-
-                if (loaded == null)
-                {
-                    byte[] raw = ReadEmbedded(Assembly.GetExecutingAssembly(), fileName);
-                    if (raw != null)
-                        loaded = Assembly.Load(raw);
-                }
-
-                if (loaded != null)
-                    resolvedAssemblies[shortName] = loaded;
-                return loaded;
-            }
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void RunApp()
     {
-        if (NativeBinDir != null)
-        {
-            try
-            {
-                CoreWebView2Environment.SetLoaderDllFolderPath(NativeBinDir);
-            }
-            catch
-            {
-            }
-        }
-
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         KeyboardLockForm form = new KeyboardLockForm();
@@ -816,8 +409,6 @@ internal static class Program
     [STAThread]
     public static void Main()
     {
-        AppDomain.CurrentDomain.AssemblyResolve += ResolveEmbeddedAssembly;
-
         bool createdNew;
         using (Mutex mutex = new Mutex(true, @"Local\KeyboardLock_SingleInstance", out createdNew))
         {
@@ -827,7 +418,6 @@ internal static class Program
                 return;
             }
 
-            PrepareEmbeddedBinaries();
             RunApp();
         }
     }

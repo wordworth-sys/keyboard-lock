@@ -22,7 +22,7 @@
 
 到 [Releases](../../releases) 下载最新的 `KeyboardLock-v*.zip`，解压后双击 `KeyboardLock.exe`。
 
-需要 Windows 10 / 11（使用系统自带的 .NET Framework 4.x 与 Edge WebView2 Runtime，常规系统均已内置；若精简版 / LTSC 未预装 WebView2，快捷键与托盘菜单仍可正常锁键，并会提示引导下载）。
+需要 Windows 10 / 11（使用系统自带的 .NET Framework 4.x，常规系统均已内置）。界面由 GDI+ 原生自绘，**不再依赖 Edge WebView2 运行时**，精简版 / LTSC 系统同样可用。
 
 ## 使用
 
@@ -68,7 +68,21 @@
 
 产物在 `dist\KeyboardLock.exe`。
 
+也可以用 .NET SDK 构建（需要 `dotnet` 命令，会从 NuGet 取 net48 参考程序集）：
+
+```powershell
+dotnet build
+```
+
+两种方式编译的是同一套源码。
+
 ## 更新日志
+
+**v2.0.0**
+- 重构：界面改为 **GDI+ 原生自绘**，新增 `src/AluPanelRenderer.cs` 总装与 `src/alu/` 分层绘制模块（机身 / 标题栏 / 滑块槽 / 状态灯 / 主键 / 页脚），彻底移除 WebView2 依赖
+- 优化：不再需要 Edge WebView2 运行时，精简版 / LTSC 系统同样可用；exe 体积与内存占用显著下降
+- 优化：界面按 DPI 等比自绘，高分屏下文字与图形同步缩放
+- 优化：删除内嵌 DLL 自释放逻辑，不再向 `%LocalAppData%` 写入任何文件
 
 **v1.3.0**
 - 重做：苹果早期 / 博朗高精拟物风界面（CNC 阳极氧化铝合金外壳、机械拨动滑块、LED 状态窗、博朗红/象牙白主按键、微凹立体键帽）
