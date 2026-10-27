@@ -6,14 +6,12 @@ using System.Threading;
 using System.Windows.Forms;
 
 using KeyboardLock.Alu;
+using Microsoft.Win32;
 
 public class KeyboardLockForm : Form
 {
     private const int WM_NCLBUTTONDOWN = 0xA1;
     private const int HTCAPTION = 0x2;
-
-    private const int WM_APP_SHOW = 0x8000 + 1;
-    private const int WM_APP_EXIT = 0x8000 + 2;
 
     private const uint SWP_NOSIZE = 0x0001;
     private const uint SWP_NOMOVE = 0x0002;
@@ -100,6 +98,11 @@ public class KeyboardLockForm : Form
 
         KeyboardHook.HotkeyToggled += OnHotkeyToggled;
         Shown += OnFormShown;
+
+        // 锁屏 / 切换用户 / 睡眠期间，低层钩子收不到任何 KEYUP：回来后清掉残留的"按住"状态，
+        // 睡眠唤醒后再顺手重装一次钩子，防止系统在此期间静默摘除了它。
+        SystemEvents.SessionSwitch += OnSessionSwitch;
+        SystemEvents.PowerModeChanged += OnPowerModeChanged;
 
         panelView = new AluPanelView();
         panelView.Dock = DockStyle.Fill;
@@ -216,15 +219,56 @@ public class KeyboardLockForm : Form
     private void OnHotkeyToggled()
     {
         // 在钩子线程上被调用：只投递，绝不在这里做任何耗时操作。
+        PostToUiThread(OnLockStateChanged);
+    }
+
+    /// <summary>把一个动作封送到 UI 线程执行；窗口句柄已销毁时静默丢弃。</summary>
+    private void PostToUiThread(MethodInvoker action)
+    {
         try
         {
             if (IsHandleCreated && !IsDisposed)
-                BeginInvoke((MethodInvoker)OnLockStateChanged);
+                BeginInvoke(action);
         }
         catch (InvalidOperationException)
         {
             // 窗口句柄恰好在退出过程中被销毁，忽略即可。
         }
+    }
+
+    private void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
+    {
+        switch (e.Reason)
+        {
+            case SessionSwitchReason.SessionUnlock:
+            case SessionSwitchReason.SessionLogon:
+            case SessionSwitchReason.ConsoleConnect:
+            case SessionSwitchReason.RemoteConnect:
+                // 锁屏期间松开的键，其 KEYUP 永远不会送到本钩子：把"按住"记录清掉。
+                KeyboardHook.ResetHeldState();
+                break;
+        }
+    }
+
+    private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode != PowerModes.Resume)
+            return;
+
+        // SystemEvents 的回调线程不固定；重装钩子会阻塞至多 1 秒，统一封送到 UI 线程做。
+        PostToUiThread(ReinstallHook);
+    }
+
+    private void ReinstallHook()
+    {
+        int error;
+        hookAvailable = KeyboardHook.Reinstall(out error);
+        hookError = error;
+
+        if (mnuToggle != null)
+            mnuToggle.Enabled = hookAvailable;
+
+        OnLockStateChanged();
     }
 
     /// <summary>
@@ -327,7 +371,7 @@ public class KeyboardLockForm : Form
         if (mnuToggle != null)
             mnuToggle.Text = isLocked ? "解锁键盘 (Ctrl+Alt+U)" : "锁定键盘 (Ctrl+Alt+U)";
         if (tray != null)
-            tray.Text = isLocked ? "键盘锁 · 已锁定" : "键盘锁 · 未锁定";
+            tray.Text = !hookAvailable ? "键盘锁 · 钩子不可用" : (isLocked ? "键盘锁 · 已锁定" : "键盘锁 · 未锁定");
 
         if (IsHandleCreated)
         {
@@ -388,6 +432,9 @@ public class KeyboardLockForm : Form
 
         reallyExit = true;
         KeyboardHook.HotkeyToggled -= OnHotkeyToggled;
+        // SystemEvents 是进程级静态事件：不注销会让本窗体对象一直被它引用。
+        SystemEvents.SessionSwitch -= OnSessionSwitch;
+        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         KeyboardHook.Stop(); // 同时会解除锁定
 
         // 托盘图标与菜单不在控件树里，需要手动释放。
@@ -423,15 +470,9 @@ public class KeyboardLockForm : Form
         if (Program.SilentInstanceMessage != 0 && m.Msg == Program.SilentInstanceMessage)
             return;
 
-        if ((m.Msg == Program.ShowInstanceMessage && m.Msg != 0) || m.Msg == WM_APP_SHOW)
+        if (Program.ShowInstanceMessage != 0 && m.Msg == Program.ShowInstanceMessage)
         {
             ShowFromTray();
-            return;
-        }
-
-        if (m.Msg == WM_APP_EXIT)
-        {
-            ExitApp();
             return;
         }
 
