@@ -162,6 +162,30 @@ internal static class KeyFilterTests
                     .Down(U, T, dt: 3500)
                     .Up(U, B).Up(LALT, B).Up(LCTRL, B)
                     .AssertLocked(false)),
+
+            Case("未锁定时钩子安装前已按下的键（Enter / Shift）：抬起放行，不卡键", () =>
+                new Rig("pre-hook-up", locked: false)
+                    .Up(0x0D /*Enter*/, P).Up(LSHIFT, P)
+                    .Down(A, P).Up(A, P)),
+
+            Case("锁定时钩子安装前已按下的键：抬起照常吞掉", () =>
+                new Rig("pre-hook-up-locked", locked: true)
+                    .Up(0x0D /*Enter*/, B).Up(LSHIFT, B)),
+
+            Case("5 秒静默清掉 held 后解锁，此前被吞过 KEYDOWN 的键其抬起仍然吞掉（不漏孤立抬起）", () =>
+                new Rig("swallowed-survives-stale", locked: true)
+                    .Down(A, B)
+                    .Down(LCTRL, B, dt: 8000).Down(LALT, B).Down(U, T).Up(U, B)
+                    .Up(A, B)
+                    .Up(LALT, B).Up(LCTRL, B)
+                    .AssertLocked(false)),
+
+            Case("抬起丢失后同一键再次按下：放行记录覆盖旧的吞掉记录", () =>
+                new Rig("swallowed-then-pass", locked: true)
+                    .Down(A, B)
+                    .Down(LCTRL, B, dt: 8000).Down(LALT, B).Down(U, T)
+                    .Down(A, P, dt: 8000).Up(A, P)
+                    .AssertLocked(false)),
         };
 
         foreach (var t in tests)

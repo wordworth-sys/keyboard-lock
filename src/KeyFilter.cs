@@ -8,7 +8,8 @@ using System;
 ///   · KEYDOWN 放行过的键，它的 KEYUP 一定放行：锁定瞬间正按着的 Ctrl/Alt 松开时能送达，不会卡键
 ///     （否则滚轮会变成 Ctrl+滚轮，点击变成 Ctrl+点击）；
 ///   · KEYDOWN 被吞掉的键，它的自动重复和 KEYUP 也一律吞掉：解锁时按住 Ctrl+Alt+U 不放，
-///     不会漏出 "uuu"，也不会漏出孤立的 Alt 抬起去激活前台程序的菜单栏。
+///     不会漏出 "uuu"，也不会漏出孤立的 Alt 抬起去激活前台程序的菜单栏；
+///   · 从未见过 KEYDOWN 的键（钩子装上前就按着），未锁定时放行它的 KEYUP：否则系统会一直认为它按着。
 /// </summary>
 internal sealed class KeyFilter
 {
@@ -35,12 +36,16 @@ internal sealed class KeyFilter
     // 管理员窗口里松开（普通权限钩子收不到那里的 KEYUP），应视为已抬起，避免之后单按 U 误触发。
     private const uint StaleHoldResetMs = 5000;
 
-    private readonly uint[] held = new uint[8];   // 物理上按着的键（256 位）
-    private readonly uint[] passed = new uint[8]; // KEYDOWN 已放行给系统、尚未放行 KEYUP 的键
+    private readonly uint[] held = new uint[8];      // 物理上按着的键（256 位），只用于判断组合键
+    private readonly uint[] passed = new uint[8];    // KEYDOWN 已放行给系统、尚未放行 KEYUP 的键
+    private readonly uint[] swallowed = new uint[8]; // KEYDOWN 被吞掉、其 KEYUP 也必须吞掉的键
     private uint lastEventTime;
     private bool hasEvent;
 
-    /// <summary>清空当前记录的物理按住状态（用于会话切换、锁屏恢复或重装钩子时消除残留）。</summary>
+    /// <summary>
+    /// 清空当前记录的物理按住状态（用于会话切换、锁屏恢复或重装钩子时消除残留）。
+    /// 只清 held：passed / swallowed 记录的是"欠系统一个配对的 KEYUP"，必须保留到对应抬起真正到来。
+    /// </summary>
     public void ResetHeld()
     {
         Array.Clear(held, 0, held.Length);
@@ -63,10 +68,22 @@ internal sealed class KeyFilter
         if (isUp)
         {
             Clear(held, slot);
-            if (!Get(passed, slot))
+
+            if (Get(passed, slot))
+            {
+                Clear(passed, slot);
+                return Pass;
+            }
+
+            if (Get(swallowed, slot))
+            {
+                Clear(swallowed, slot);
                 return Block;
-            Clear(passed, slot);
-            return Pass;
+            }
+
+            // 从未见过这个键的 KEYDOWN：它是在钩子装上之前就按着的。
+            // 未锁定时必须放行，否则系统会一直认为它处于按下状态（修饰键尤其致命）；锁定时照常吞掉。
+            return locked ? Block : Pass;
         }
 
         if (Get(held, slot))
@@ -76,18 +93,25 @@ internal sealed class KeyFilter
 
         if (vk == VK_U && IsCtrlHeld() && IsAltHeld())
         {
-            Clear(passed, slot);
+            Swallow(slot);
             return ToggleLock;
         }
 
         if (locked)
         {
-            Clear(passed, slot);
+            Swallow(slot);
             return Block;
         }
 
+        Clear(swallowed, slot);
         Set(passed, slot);
         return Pass;
+    }
+
+    private void Swallow(int slot)
+    {
+        Clear(passed, slot);
+        Set(swallowed, slot);
     }
 
     private bool IsCtrlHeld()
