@@ -7,6 +7,9 @@ namespace KeyboardLock.Alu
     /// <summary>
     /// 承载 <see cref="AluPanelRenderer"/> 的控件：把鼠标事件翻译成面板动作，
     /// 并维护悬停 / 按下的视觉状态。窗体只关心「用户想做什么」。
+    ///
+    /// 重绘策略：锁定状态变化才整板失效；悬停窗口控制键只失效右上角那一小块，
+    /// 按下 / 松开主键只失效主键槽。悬停主键和凹槽模块没有视觉反馈，不触发重绘。
     /// </summary>
     internal sealed class AluPanelView : Control
     {
@@ -38,7 +41,7 @@ namespace KeyboardLock.Alu
             BackColor = AluPalette.ChassisMid;
         }
 
-        /// <summary>面板状态；变更后立即重绘。</summary>
+        /// <summary>面板状态；变更后整板重绘（标题、滑块、状态窗、主键都会变）。</summary>
         public AluPanelState State
         {
             get { return renderer.State; }
@@ -53,35 +56,39 @@ namespace KeyboardLock.Alu
 
         protected override void OnPaint(PaintEventArgs e)
         {
-            renderer.Draw(e.Graphics, ClientSize);
+            renderer.Draw(e.Graphics, ClientSize, e.ClipRectangle);
         }
 
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
-
-            AluHitTarget target = renderer.HitTest(e.Location);
-            if (target == hoverTarget)
-                return;
-
-            hoverTarget = target;
-            renderer.HoverMinimize = target == AluHitTarget.Minimize;
-            renderer.HoverClose = target == AluHitTarget.CloseToTray;
-            renderer.HoverMainButton = target == AluHitTarget.MainButton;
-            UpdateCursor(target);
-            Invalidate();
+            SetHover(renderer.HitTest(e.Location));
         }
 
         protected override void OnMouseLeave(EventArgs e)
         {
             base.OnMouseLeave(e);
+            SetHover(AluHitTarget.None);
+        }
 
-            hoverTarget = AluHitTarget.None;
-            renderer.HoverMinimize = false;
-            renderer.HoverClose = false;
-            renderer.HoverMainButton = false;
-            UpdateCursor(AluHitTarget.None);
-            Invalidate();
+        private void SetHover(AluHitTarget target)
+        {
+            if (target == hoverTarget)
+                return;
+
+            bool wasOnWinControl = IsWindowControl(hoverTarget);
+            hoverTarget = target;
+            renderer.HoverMinimize = target == AluHitTarget.Minimize;
+            renderer.HoverClose = target == AluHitTarget.CloseToTray;
+            UpdateCursor(target);
+
+            if (wasOnWinControl || IsWindowControl(target))
+                Invalidate(renderer.WindowControlsBounds);
+        }
+
+        private static bool IsWindowControl(AluHitTarget target)
+        {
+            return target == AluHitTarget.Minimize || target == AluHitTarget.CloseToTray;
         }
 
         protected override void OnMouseDown(MouseEventArgs e)
@@ -104,9 +111,13 @@ namespace KeyboardLock.Alu
                 return;
 
             pressedTarget = target;
-            renderer.PressMainButton = target == AluHitTarget.MainButton;
             Capture = true;
-            Invalidate();
+
+            if (target == AluHitTarget.MainButton)
+            {
+                renderer.PressMainButton = true;
+                Invalidate(renderer.MainButtonBounds);
+            }
         }
 
         protected override void OnMouseUp(MouseEventArgs e)
@@ -119,9 +130,13 @@ namespace KeyboardLock.Alu
             AluHitTarget target = renderer.HitTest(e.Location);
             AluHitTarget released = pressedTarget;
             pressedTarget = AluHitTarget.None;
-            renderer.PressMainButton = false;
             Capture = false;
-            Invalidate();
+
+            if (renderer.PressMainButton)
+            {
+                renderer.PressMainButton = false;
+                Invalidate(renderer.MainButtonBounds);
+            }
 
             if (released == AluHitTarget.None || released != target)
                 return;

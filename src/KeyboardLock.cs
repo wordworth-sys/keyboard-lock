@@ -579,7 +579,8 @@ internal static class Program
             }
 
             // exe 换了目录或换了版本时，把启动文件夹里的快捷方式指回当前 exe。
-            AutoStart.EnsureCurrent();
+            // 放后台做：COM 实例化 + 读 .lnk 不该挡在窗口显示前面。
+            AutoStart.EnsureCurrentAsync();
 
             RunApp(silent);
         }

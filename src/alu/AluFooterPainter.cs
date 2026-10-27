@@ -41,8 +41,10 @@ namespace KeyboardLock.Alu
         private static float DrawKey(Graphics g, AluMetrics m, AluFonts fonts, float x, float keycapWidth, string label)
         {
             float s = m.Scale;
-            float wellWidth = keycapWidth + WellPadding + WellBorder;
-            float wellHeight = 28f * s + WellPadding * s + WellBorder * s;
+            // 井口比键帽四周各多出 padding + border；两者都是设计稿单位，必须一起乘 scale，
+            // 否则高 DPI 下键帽会比井口宽、挤到后面的「+」上。
+            float wellWidth = (keycapWidth + WellPadding + WellBorder) * s;
+            float wellHeight = (28f + WellPadding + WellBorder) * s;
 
             RectangleF well = new RectangleF(x, m.Footer.Top, wellWidth, wellHeight);
 

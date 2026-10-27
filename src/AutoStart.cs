@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows.Forms;
 
 /// <summary>
@@ -101,11 +102,32 @@ internal static class AutoStart
 
     /// <summary>
     /// 自愈：快捷方式还在、但指向的不是当前 exe（挪了目录 / 换了版本）时重建它。
-    /// 程序启动时调用一次即可。
+    /// 在后台 STA 线程上执行，不挡在窗口显示前面；程序启动时调用一次即可。
+    /// WScript.Shell 是单线程套间（STA）COM 组件，所以不走线程池（MTA），而是起一个专用 STA 线程。
+    /// 未开启自启时只做一次 File.Exists 就返回，开销可忽略。
     /// </summary>
-    public static void EnsureCurrent()
+    public static void EnsureCurrentAsync()
     {
-        EnsureCurrent(CurrentExecutablePath());
+        // exe 路径在调用线程上取好：Application.ExecutablePath 依赖主线程上下文。
+        string exePath = CurrentExecutablePath();
+        if (string.IsNullOrEmpty(exePath) || !IsEnabled)
+            return;
+
+        Thread t = new Thread(delegate()
+        {
+            try
+            {
+                EnsureCurrent(exePath);
+            }
+            catch
+            {
+                // 自愈失败不影响主流程：下次启动会再试一次。
+            }
+        });
+        t.Name = "KeyboardLock.AutoStartHeal";
+        t.IsBackground = true;
+        t.SetApartmentState(ApartmentState.STA);
+        t.Start();
     }
 
     /// <summary>
