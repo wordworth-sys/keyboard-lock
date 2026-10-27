@@ -1,6 +1,5 @@
 using System;
 using System.Drawing;
-using System.Drawing.Drawing2D;
 
 namespace KeyboardLock.Alu
 {
@@ -17,8 +16,6 @@ namespace KeyboardLock.Alu
 
         public static void Draw(Graphics g, AluMetrics m, AluFonts fonts)
         {
-            float s = m.Scale;
-
             float ctrlWidth = KeycapWidth(g, m, fonts, "Ctrl");
             float altWidth = KeycapWidth(g, m, fonts, "Alt");
             float uWidth = KeycapWidth(g, m, fonts, "U");
@@ -52,7 +49,7 @@ namespace KeyboardLock.Alu
             // 井口
             using (SolidBrush wellBrush = new SolidBrush(AluPalette.KeyWellFill))
                 AluSurface.FillRounded(g, well, m.KeyWellRadiusPx, wellBrush);
-            AluSurface.DrawInnerShadowTop(g, well, m.KeyWellRadiusPx, AluPalette.Alpha("#000000", 0.48), 3f * s);
+            AluSurface.DrawInnerShadowTop(g, well, m.KeyWellRadiusPx, AluPalette.KeyWellInnerShadow, 3f * s);
 
             AluSurface.DrawTopBand(g, well, m.KeyWellRadiusPx, AluPalette.KeyWellBorderTop, 1f * s, 1f * s);
             AluSurface.DrawBottomBand(g, well, m.KeyWellRadiusPx, AluPalette.KeyWellBorderBottom, 1f * s, 1f * s);
@@ -64,14 +61,11 @@ namespace KeyboardLock.Alu
                 keycapWidth * s,
                 28f * s);
 
-            AluSurface.DrawDropShadow(g, cap, m.KeycapRadiusPx, AluPalette.Alpha("#000000", 0.30), 2f * s, 3f * s);
+            AluSurface.DrawDropShadow(g, cap, m.KeycapRadiusPx, AluPalette.KeycapShadow, 2f * s, 3f * s);
 
-            AluSurface.FillVerticalGradient(
-                g, cap,
-                new Color[] { AluPalette.KeycapTop, AluPalette.KeycapMid, AluPalette.KeycapBottom },
-                new float[] { 0f, 0.70f, 1f });
+            AluSurface.FillVerticalGradient(g, cap, AluPalette.KeycapStops, AluPalette.KeycapPositions);
 
-            AluSurface.DrawInnerTopLight(g, cap, m.KeycapRadiusPx, AluPalette.Alpha("#FFFFFF", 0.95), 1f * s);
+            AluSurface.DrawInnerTopLight(g, cap, m.KeycapRadiusPx, AluPalette.KeycapTopLight, 1f * s);
 
             // 键帽顶面的二次曲面（CSS: .keycap::before）
             RectangleF face = new RectangleF(
@@ -82,20 +76,17 @@ namespace KeyboardLock.Alu
 
             if (face.Width > 0f && face.Height > 0f)
             {
-                AluSurface.FillRoundedVerticalGradient(
-                    g, face, 3.5f * s,
-                    new Color[] { AluPalette.KeycapFaceTop, AluPalette.KeycapFaceBottom },
-                    new float[] { 0f, 1f });
+                AluSurface.FillRoundedVerticalGradient(g, face, 3.5f * s, AluPalette.KeycapFaceStops, AluPalette.TwoStopPositions);
 
-                AluSurface.DrawInnerShadowTop(g, face, 3.5f * s, AluPalette.Alpha("#0F172A", 0.14), 2f * s);
-                AluSurface.DrawInnerBottomEdge(g, face, 3.5f * s, AluPalette.Alpha("#FFFFFF", 0.95), 1f * s);
+                AluSurface.DrawInnerShadowTop(g, face, 3.5f * s, AluPalette.KeycapFaceShadow, 2f * s);
+                AluSurface.DrawInnerBottomEdge(g, face, 3.5f * s, AluPalette.KeycapFaceEdge, 1f * s);
             }
 
             using (Pen pen = new Pen(AluPalette.KeycapBorder, 1f))
                 AluSurface.DrawRounded(g, cap, m.KeycapRadiusPx, pen);
 
             AluText.Draw(g, label, fonts.KeyLabel, AluPalette.KeycapText, cap,
-                AluTextAlign.Center, 0f, AluPalette.Alpha("#FFFFFF", 0.95), 1f);
+                AluTextAlign.Center, 0f, AluPalette.KeycapTextShadow, 1f);
 
             return well.Right + GroupGap * s;
         }
@@ -108,7 +99,7 @@ namespace KeyboardLock.Alu
 
             RectangleF rect = new RectangleF(x, m.Footer.Top + (m.Footer.Height - height) / 2f, width, height);
             AluText.Draw(g, "+", fonts.KeyLabel, AluPalette.PlusSign, rect,
-                AluTextAlign.Center, 0f, AluPalette.Alpha("#FFFFFF", 0.88), 1f);
+                AluTextAlign.Center, 0f, AluPalette.PlusSignShadow, 1f);
 
             return rect.Right + GroupGap * s;
         }

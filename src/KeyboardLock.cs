@@ -169,7 +169,7 @@ public class KeyboardLockForm : Form
         tray.Text = hookAvailable ? "键盘锁 · 未锁定" : "键盘锁 · 钩子不可用";
         tray.ContextMenuStrip = trayMenu;
         tray.Visible = true;
-        tray.DoubleClick += delegate { ShowFromTray(); };
+        // 只订阅左键单击：双击会先触发两次单击，再订阅 DoubleClick 只会让 ShowFromTray 多跑一遍。
         tray.MouseClick += delegate(object s, MouseEventArgs e)
         {
             if (e.Button == MouseButtons.Left)

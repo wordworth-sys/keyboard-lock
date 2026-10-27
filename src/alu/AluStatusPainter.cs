@@ -1,6 +1,5 @@
 using System;
 using System.Drawing;
-using System.Drawing.Drawing2D;
 
 namespace KeyboardLock.Alu
 {
@@ -9,28 +8,17 @@ namespace KeyboardLock.Alu
     /// </summary>
     internal static class AluStatusPainter
     {
+        private static readonly PointF LensFocus = new PointF(0.5f, 0.65f);
+
         public static void Draw(Graphics g, AluMetrics m, AluFonts fonts, AluPanelState state)
         {
             RectangleF window = m.StatusWindow;
 
             // 玻璃面板：底色渐变 + 一道斜向反光
-            AluSurface.FillVerticalGradient(
-                g, window,
-                new Color[] { AluPalette.StatusTop, AluPalette.StatusBottom },
-                new float[] { 0f, 1f });
+            AluSurface.FillVerticalGradient(g, window, AluPalette.StatusStops, AluPalette.TwoStopPositions);
+            AluSurface.FillVerticalGradient(g, window, AluPalette.StatusGlassStops, AluPalette.StatusGlassPositions);
 
-            AluSurface.FillVerticalGradient(
-                g, window,
-                new Color[]
-                {
-                    AluPalette.Alpha("#FFFFFF", 0.11),
-                    AluPalette.Alpha("#FFFFFF", 0.02),
-                    AluPalette.Alpha("#000000", 0.22),
-                    AluPalette.Alpha("#000000", 0.42)
-                },
-                new float[] { 0f, 0.42f, 0.425f, 1f });
-
-            AluSurface.DrawInnerShadowTop(g, window, m.StatusRadiusPx, AluPalette.Alpha("#000000", 0.88), 6f * m.Scale);
+            AluSurface.DrawInnerShadowTop(g, window, m.StatusRadiusPx, AluPalette.ShadowStrong, 6f * m.Scale);
 
             using (Pen pen = new Pen(AluPalette.StatusBorder, 1f))
                 AluSurface.DrawRounded(g, window, m.StatusRadiusPx, pen);
@@ -44,48 +32,36 @@ namespace KeyboardLock.Alu
             RectangleF bezel = m.LedBezel;
             RectangleF lens = m.LedLens;
 
-            Color core, mid, edge;
+            Color[] lensStops;
             Color glow;
             if (state == AluPanelState.Locked)
             {
-                core = AluPalette.LedLensRedCore;
-                mid = AluPalette.LedLensRedMid;
-                edge = AluPalette.LedLensRedEdge;
+                lensStops = AluPalette.LedRedStops;
                 glow = AluPalette.LedLensRedMid;
             }
             else if (state == AluPanelState.Unavailable)
             {
-                core = AluPalette.LedLensAmberCore;
-                mid = AluPalette.LedLensAmberMid;
-                edge = AluPalette.LedLensAmberEdge;
+                lensStops = AluPalette.LedAmberStops;
                 glow = AluPalette.LedLensAmberMid;
             }
             else
             {
-                core = AluPalette.LedLensGreenCore;
-                mid = AluPalette.LedLensGreenMid;
-                edge = AluPalette.LedLensGreenEdge;
+                lensStops = AluPalette.LedGreenStops;
                 glow = AluPalette.LedLensGreenMid;
             }
 
             // 灯座下沿的一道白色高光
-            using (SolidBrush highlightBrush = new SolidBrush(AluPalette.Alpha("#FFFFFF", 0.22)))
+            using (SolidBrush highlightBrush = new SolidBrush(AluPalette.LedBezelHighlight))
                 g.FillRectangle(highlightBrush, bezel.X, bezel.Bottom, bezel.Width, 1f * m.Scale);
 
-            AluSurface.FillVerticalGradient(
-                g, bezel,
-                new Color[] { AluPalette.LedBezelTop, AluPalette.LedBezelBottom },
-                new float[] { 0f, 1f });
-            AluSurface.DrawInnerShadowTop(g, bezel, bezel.Width / 2f, AluPalette.Alpha("#000000", 0.92), 3f * m.Scale);
+            AluSurface.FillVerticalGradient(g, bezel, AluPalette.LedBezelStops, AluPalette.TwoStopPositions);
+            AluSurface.DrawInnerShadowTop(g, bezel, bezel.Width / 2f, AluPalette.LedBezelInnerShadow, 3f * m.Scale);
 
             // 灯罩外的辉光
             AluSurface.DrawGlow(g, lens, glow, 0.55, 1.6f);
 
             // 灯罩本体
-            AluSurface.FillRadialGradient(
-                g, lens, new PointF(0.5f, 0.65f),
-                new Color[] { core, mid, edge },
-                new float[] { 0f, 0.45f, 1f });
+            AluSurface.FillRadialGradient(g, lens, LensFocus, lensStops, AluPalette.LedLensPositions);
 
             // 左上角的高光点
             float hw = 5f * m.Scale;

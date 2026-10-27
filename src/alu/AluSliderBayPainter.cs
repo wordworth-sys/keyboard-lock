@@ -1,6 +1,5 @@
 using System;
 using System.Drawing;
-using System.Drawing.Drawing2D;
 
 namespace KeyboardLock.Alu
 {
@@ -15,15 +14,12 @@ namespace KeyboardLock.Alu
             RectangleF bay = m.SliderBay;
 
             // 导轨底色 + 机械拉丝条纹
-            AluSurface.FillVerticalGradient(
-                g, bay,
-                new Color[] { AluPalette.RailTop, AluPalette.RailBottom },
-                new float[] { 0f, 1f });
+            AluSurface.FillVerticalGradient(g, bay, AluPalette.RailStops, AluPalette.TwoStopPositions);
 
             AluSurface.FillVerticalStripes(g, bay, AluPalette.RailStripeLight, AluPalette.RailStripeDark,
                 4f * m.Scale, 2f * m.Scale);
 
-            AluSurface.DrawInnerShadowTop(g, bay, m.BayRadiusPx, AluPalette.Alpha("#000000", 0.95), 5f * m.Scale);
+            AluSurface.DrawInnerShadowTop(g, bay, m.BayRadiusPx, AluPalette.RailInnerShadow, 5f * m.Scale);
 
             // 刻度文字（滑块会盖住其中一侧）
             float labelY = m.Rail.Top + (m.Rail.Height - 12f * m.Scale) / 2f;
@@ -42,14 +38,11 @@ namespace KeyboardLock.Alu
         {
             float radius = m.ThumbRadiusPx;
 
-            AluSurface.DrawDropShadow(g, thumb, radius, AluPalette.Alpha("#000000", 0.80), 3f * m.Scale, 6f * m.Scale);
+            AluSurface.DrawDropShadow(g, thumb, radius, AluPalette.ThumbShadow, 3f * m.Scale, 6f * m.Scale);
 
-            AluSurface.FillVerticalGradient(
-                g, thumb,
-                new Color[] { AluPalette.ThumbTop, AluPalette.ThumbMid, AluPalette.ThumbBottom },
-                new float[] { 0f, 0.56f, 1f });
+            AluSurface.FillVerticalGradient(g, thumb, AluPalette.ThumbStops, AluPalette.ThumbPositions);
 
-            AluSurface.DrawInnerTopLight(g, thumb, radius, AluPalette.Alpha("#FFFFFF", 0.95), 1.5f * m.Scale);
+            AluSurface.DrawInnerTopLight(g, thumb, radius, AluPalette.ThumbTopLight, 1.5f * m.Scale);
             AluSurface.DrawInnerBottomEdge(g, thumb, radius, AluPalette.ThumbInset, 3f * m.Scale);
 
             using (Pen pen = new Pen(AluPalette.ThumbBorder, 1f))
@@ -62,7 +55,7 @@ namespace KeyboardLock.Alu
                 thumb.Width * 0.6f,
                 thumb.Height);
             AluText.Draw(g, "LOCK", fonts.ThumbLabel, AluPalette.ThumbText, label,
-                AluTextAlign.Left, 0f, AluPalette.Alpha("#FFFFFF", 0.95), 1f);
+                AluTextAlign.Left, 0f, AluPalette.ThumbTextShadow, 1f);
 
             // 右侧的防滑棱
             float ridgeWidth = 2f * m.Scale;
@@ -70,14 +63,14 @@ namespace KeyboardLock.Alu
             float ridgeHeight = 22f * m.Scale;
             float ridgeRight = thumb.Right - 10f * m.Scale;
             float startX = ridgeRight - (3f * ridgeWidth + 2f * ridgeGap);
+            float y = thumb.Top + (thumb.Height - ridgeHeight) / 2f;
 
             using (SolidBrush ridgeBrush = new SolidBrush(AluPalette.GripRidge))
-            using (SolidBrush highlightBrush = new SolidBrush(AluPalette.Alpha("#FFFFFF", 0.95)))
+            using (SolidBrush highlightBrush = new SolidBrush(AluPalette.GripRidgeHighlight))
             {
                 for (int i = 0; i < 3; i++)
                 {
                     float x = startX + i * (ridgeWidth + ridgeGap);
-                    float y = thumb.Top + (thumb.Height - ridgeHeight) / 2f;
                     g.FillRectangle(ridgeBrush, x, y, ridgeWidth, ridgeHeight);
                     g.FillRectangle(highlightBrush, x + ridgeWidth, y, 1f * m.Scale, ridgeHeight);
                 }

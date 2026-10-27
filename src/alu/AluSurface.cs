@@ -110,17 +110,18 @@ namespace KeyboardLock.Alu
             float cy = r.Top + r.Height * focus.Y;
             float rx = r.Width;
             float ry = r.Height;
+            if (rx <= 0f || ry <= 0f)
+                return;
 
-            // 由外圈画向圆心：内圈覆盖外圈，最终圆心为 stops[0]。
-            for (int i = 0; i < Steps; i++)
+            // 由外圈画向圆心：内圈覆盖外圈，最终圆心为 stops[0]。一把画刷改色复用，不每步新建。
+            using (SolidBrush brush = new SolidBrush(Color.Black))
             {
-                float t = 1f - (float)(i + 0.5) / Steps;          // 1 = 外缘，0 = 圆心
-                Color c = Sample(stops, positions, t);
-                if (rx <= 0f || ry <= 0f)
-                    continue;
-                RectangleF band = new RectangleF(cx - rx * t, cy - ry * t, rx * t * 2f, ry * t * 2f);
-                using (SolidBrush brush = new SolidBrush(c))
-                    g.FillEllipse(brush, band);
+                for (int i = 0; i < Steps; i++)
+                {
+                    float t = 1f - (float)(i + 0.5) / Steps;          // 1 = 外缘，0 = 圆心
+                    brush.Color = Sample(stops, positions, t);
+                    g.FillEllipse(brush, cx - rx * t, cy - ry * t, rx * t * 2f, ry * t * 2f);
+                }
             }
         }
 
@@ -165,23 +166,26 @@ namespace KeyboardLock.Alu
             float cy = lens.Top + lens.Height / 2f;
             float baseR = Math.Max(lens.Width, lens.Height) / 2f;
 
-            for (int k = Layers; k >= 1; k--)
+            using (SolidBrush brush = new SolidBrush(Color.Black))
             {
-                float t = (float)k / Layers;                       // 1 = 最外层
-                float radius = baseR * (1f + spread * t);
-                float target = (float)maxAlpha * (1f - t) * (1f - t);
-                if (target <= 0.002f)
-                    continue;
+                for (int k = Layers; k >= 1; k--)
+                {
+                    float t = (float)k / Layers;                       // 1 = 最外层
+                    float radius = baseR * (1f + spread * t);
+                    float target = (float)maxAlpha * (1f - t) * (1f - t);
+                    if (target <= 0.002f)
+                        continue;
 
-                // 每一层的 alpha 反推自「累计不透明度」，叠出接近二次衰减的光晕。
-                int layersBelow = Layers - k + 1;
-                double a = 1.0 - Math.Pow(1.0 - target, 1.0 / layersBelow);
-                int alpha = (int)Math.Round(a * 255.0);
-                if (alpha <= 0)
-                    continue;
+                    // 每一层的 alpha 反推自「累计不透明度」，叠出接近二次衰减的光晕。
+                    int layersBelow = Layers - k + 1;
+                    double a = 1.0 - Math.Pow(1.0 - target, 1.0 / layersBelow);
+                    int alpha = (int)Math.Round(a * 255.0);
+                    if (alpha <= 0)
+                        continue;
 
-                using (SolidBrush brush = new SolidBrush(Color.FromArgb(alpha, color.R, color.G, color.B)))
+                    brush.Color = Color.FromArgb(alpha, color.R, color.G, color.B);
                     g.FillEllipse(brush, cx - radius, cy - radius, radius * 2f, radius * 2f);
+                }
             }
         }
 
@@ -223,16 +227,19 @@ namespace KeyboardLock.Alu
         public static void DrawDropShadow(Graphics g, RectangleF r, float radius, Color color, float offsetY, float spread)
         {
             const int Layers = 5;
-            for (int i = Layers; i >= 1; i--)
+            using (SolidBrush brush = new SolidBrush(Color.Black))
             {
-                float t = (float)i / Layers;                   // 1 = 最外层
-                RectangleF shadow = new RectangleF(r.X, r.Y + offsetY, r.Width, r.Height);
-                shadow.Inflate(spread * t, spread * t);
-                int alpha = (int)Math.Round(color.A * (1f - t) * 0.9f);
-                if (alpha <= 0)
-                    continue;
-                using (SolidBrush brush = new SolidBrush(Color.FromArgb(alpha, color.R, color.G, color.B)))
+                for (int i = Layers; i >= 1; i--)
+                {
+                    float t = (float)i / Layers;                   // 1 = 最外层
+                    RectangleF shadow = new RectangleF(r.X, r.Y + offsetY, r.Width, r.Height);
+                    shadow.Inflate(spread * t, spread * t);
+                    int alpha = (int)Math.Round(color.A * (1f - t) * 0.9f);
+                    if (alpha <= 0)
+                        continue;
+                    brush.Color = Color.FromArgb(alpha, color.R, color.G, color.B);
                     FillRounded(g, shadow, radius + spread * t, brush);
+                }
             }
         }
 
@@ -299,18 +306,15 @@ namespace KeyboardLock.Alu
             if (r.Width <= 0f || r.Height <= 0f || period <= 0f)
                 return;
 
-            float x = r.Left;
-            while (x < r.Right)
+            // 两把画刷贯穿整个循环；此前每条纹都新建两把，一帧下来近百个 GDI 对象。
+            using (SolidBrush lightBrush = new SolidBrush(light))
+            using (SolidBrush darkBrush = new SolidBrush(dark))
             {
-                RectangleF lightBand = new RectangleF(x, r.Top, duty, r.Height);
-                using (SolidBrush brush = new SolidBrush(light))
-                    g.FillRectangle(brush, lightBand);
-
-                RectangleF darkBand = new RectangleF(x + duty, r.Top, period - duty, r.Height);
-                using (SolidBrush brush = new SolidBrush(dark))
-                    g.FillRectangle(brush, darkBand);
-
-                x += period;
+                for (float x = r.Left; x < r.Right; x += period)
+                {
+                    g.FillRectangle(lightBrush, x, r.Top, duty, r.Height);
+                    g.FillRectangle(darkBrush, x + duty, r.Top, period - duty, r.Height);
+                }
             }
         }
     }

@@ -20,7 +20,7 @@ namespace KeyboardLock.Alu
         private static void DrawModelTag(Graphics g, AluMetrics m, AluFonts fonts)
         {
             AluText.Draw(g, "ALU-01", fonts.ModelTag, AluPalette.ModelTagText, m.ModelTag,
-                AluTextAlign.Left, 0f, AluPalette.Alpha("#FFFFFF", 0.82), 1f);
+                AluTextAlign.Left, 0f, AluPalette.ModelTagTextShadow, 1f);
         }
 
         private static void DrawWindowTitle(Graphics g, AluMetrics m, AluFonts fonts, AluPanelState state)
@@ -30,16 +30,14 @@ namespace KeyboardLock.Alu
                 AluTextAlign.Center, 0f, AluPalette.TitleTextShadow, 1f);
         }
 
-        private static void DrawWindowControls(Graphics g, AluMetrics m, bool hoverMinimize, bool hoverClose)
+        /// <summary>窗口控制键区域（铝槽 + 两颗键）。悬停局部重绘时只需刷新这一块。</summary>
+        public static void DrawWindowControls(Graphics g, AluMetrics m, bool hoverMinimize, bool hoverClose)
         {
             RectangleF slot = m.WinSlot;
 
             // 下沉的铝槽
-            AluSurface.FillVerticalGradient(
-                g, slot,
-                new Color[] { AluPalette.WinSlotTop, AluPalette.WinSlotBottom },
-                new float[] { 0f, 1f });
-            AluSurface.DrawInnerShadowTop(g, slot, m.WinSlotRadiusPx, AluPalette.Alpha("#000000", 0.45), 3f * m.Scale);
+            AluSurface.FillVerticalGradient(g, slot, AluPalette.WinSlotStops, AluPalette.TwoStopPositions);
+            AluSurface.DrawInnerShadowTop(g, slot, m.WinSlotRadiusPx, AluPalette.WinSlotInnerShadow, 3f * m.Scale);
 
             AluSurface.DrawTopBand(g, slot, m.WinSlotRadiusPx, AluPalette.WinSlotBorderTop, 1f * m.Scale, 1f * m.Scale);
             AluSurface.DrawBottomBand(g, slot, m.WinSlotRadiusPx, AluPalette.WinSlotBorderBottom, 1f * m.Scale, 1f * m.Scale);
@@ -51,42 +49,29 @@ namespace KeyboardLock.Alu
         private static void DrawKey(Graphics g, AluMetrics m, RectangleF key, bool hovered, bool isClose)
         {
             float radius = m.WinKeyRadiusPx;
+            bool closeHot = isClose && hovered;
 
             AluSurface.DrawDropShadow(g, key, radius, AluPalette.ShadowWeak, 1f * m.Scale, 1.5f * m.Scale);
 
-            Color top, mid, bottom, border, glyph;
-            if (isClose && hovered)
+            Color[] stops;
+            Color border, glyph;
+            if (closeHot)
             {
-                top = AluPalette.CloseHoverTop;
-                mid = AluPalette.CloseHoverMid;
-                bottom = AluPalette.CloseHoverBottom;
+                stops = AluPalette.CloseHoverStops;
                 border = AluPalette.CloseHoverBorder;
                 glyph = AluPalette.CloseHoverGlyph;
             }
-            else if (hovered)
-            {
-                top = AluPalette.WinKeyHoverTop;
-                mid = AluPalette.WinKeyHoverMid;
-                bottom = AluPalette.WinKeyHoverBottom;
-                border = AluPalette.WinKeyBorder;
-                glyph = AluPalette.WinGlyph;
-            }
             else
             {
-                top = AluPalette.WinKeyTop;
-                mid = AluPalette.WinKeyMid;
-                bottom = AluPalette.WinKeyBottom;
+                stops = hovered ? AluPalette.WinKeyHoverStops : AluPalette.WinKeyStops;
                 border = AluPalette.WinKeyBorder;
                 glyph = AluPalette.WinGlyph;
             }
 
-            AluSurface.FillVerticalGradient(
-                g, key,
-                new Color[] { top, mid, bottom },
-                new float[] { 0f, 0.60f, 1f });
+            AluSurface.FillVerticalGradient(g, key, stops, AluPalette.WinKeyPositions);
 
-            AluSurface.DrawInnerTopLight(g, key, radius, AluPalette.Alpha("#FFFFFF", isClose && hovered ? 0.70 : 0.95), 1f * m.Scale);
-            AluSurface.DrawInnerBottomEdge(g, key, radius, isClose && hovered ? AluPalette.CloseHoverInset : AluPalette.WinKeyInset, 1.5f * m.Scale);
+            AluSurface.DrawInnerTopLight(g, key, radius, closeHot ? AluPalette.CloseHoverTopLight : AluPalette.WinKeyTopLight, 1f * m.Scale);
+            AluSurface.DrawInnerBottomEdge(g, key, radius, closeHot ? AluPalette.CloseHoverInset : AluPalette.WinKeyInset, 1.5f * m.Scale);
 
             using (Pen pen = new Pen(border, 1f))
                 AluSurface.DrawRounded(g, key, radius, pen);

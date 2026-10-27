@@ -73,7 +73,6 @@ namespace KeyboardLock.Alu
             {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
                 // 必须是 Default：HighQuality 会启用伽马校正混合，半透明高光会明显发白，
                 // 与浏览器（sRGB 直接混合）的观感对不上。
                 g.CompositingQuality = CompositingQuality.Default;

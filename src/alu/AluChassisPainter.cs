@@ -10,13 +10,9 @@ namespace KeyboardLock.Alu
     /// </summary>
     internal static class AluChassisPainter
     {
-        private static readonly Color EdgeShadeLeft = AluPalette.Alpha("#19202A", 0.10);
-        private static readonly Color EdgeShadeRight = AluPalette.Alpha("#19202A", 0.12);
-        private static readonly Color EdgeLight = AluPalette.Alpha("#FFFFFF", 0.28);
-        private static readonly Color EdgeFade = AluPalette.Alpha("#FFFFFF", 0.00);
-        private static readonly Color BevelTop = AluPalette.Alpha("#FFFFFF", 0.98);
-        private static readonly Color BevelSide = AluPalette.Alpha("#FFFFFF", 0.75);
-        private static readonly Color BevelBottomLine = AluPalette.Alpha("#FFFFFF", 0.45);
+        // PathGradientBrush 的外圈颜色：固定不变，避免每帧 new 一个单元素数组。
+        private static readonly Color[] TopHighlightOuterSoft = { Color.FromArgb(0, 255, 255, 255) };
+        private static readonly Color[] TopHighlightOuterCore = { Color.FromArgb(92, 255, 255, 255) };
 
         public static void Draw(Graphics g, AluMetrics m)
         {
@@ -28,24 +24,18 @@ namespace KeyboardLock.Alu
             GraphicsState clip = AluSurface.ClipRounded(g, chassis, radius);
 
             // 1. 机身底色：竖直多段渐变
-            AluSurface.FillVerticalGradient(
-                g, chassis,
-                new Color[] { AluPalette.ChassisTop, AluPalette.ChassisUpper, AluPalette.ChassisMid, AluPalette.ChassisLower, AluPalette.ChassisBottom },
-                new float[] { 0f, 0.22f, 0.52f, 0.82f, 1f });
+            AluSurface.FillVerticalGradient(g, chassis, AluPalette.ChassisStops, AluPalette.ChassisPositions);
 
             // 2. 顶部径向高光（CSS: radial-gradient(125% 65% at 50% -6%, ...)）
             DrawTopHighlight(g, chassis);
 
             // 3. 左右边缘反光（CSS: linear-gradient(90deg, ...)）
-            AluSurface.FillHorizontalGradient(
-                g, chassis,
-                new Color[] { EdgeShadeLeft, EdgeLight, EdgeFade, EdgeFade, EdgeLight, EdgeShadeRight },
-                new float[] { 0f, 0.06f, 0.18f, 0.82f, 0.94f, 1f });
+            AluSurface.FillHorizontalGradient(g, chassis, AluPalette.ChassisEdgeStops, AluPalette.ChassisEdgePositions);
 
             // 4. 内斜面：顶部高光、左右细白线、底部压边
-            AluSurface.DrawInnerTopLight(g, content, radius - s, BevelTop, 2f * s);
+            AluSurface.DrawInnerTopLight(g, content, radius - s, AluPalette.ChassisBevelTop, 2f * s);
 
-            using (SolidBrush sideBrush = new SolidBrush(BevelSide))
+            using (SolidBrush sideBrush = new SolidBrush(AluPalette.ChassisBevelSide))
             {
                 g.FillRectangle(sideBrush, content.X, content.Y, 1.5f * s, content.Height);
                 g.FillRectangle(sideBrush, content.Right - 1.5f * s, content.Y, 1.5f * s, content.Height);
@@ -54,7 +44,7 @@ namespace KeyboardLock.Alu
             using (SolidBrush bottomBrush = new SolidBrush(AluPalette.ChassisBottomRidge))
                 g.FillRectangle(bottomBrush, content.X + 2f * s, content.Bottom - 3f * s, content.Width - 4f * s, 3f * s);
 
-            using (SolidBrush lineBrush = new SolidBrush(BevelBottomLine))
+            using (SolidBrush lineBrush = new SolidBrush(AluPalette.ChassisBevelBottomLine))
                 g.FillRectangle(lineBrush, content.X + 2f * s, content.Bottom - 4f * s, content.Width - 4f * s, 1f * s);
 
             // 5. 标题栏底色
@@ -76,10 +66,7 @@ namespace KeyboardLock.Alu
             RectangleF module = m.Module;
             float s = m.Scale;
 
-            AluSurface.FillVerticalGradient(
-                g, module,
-                new Color[] { AluPalette.ModuleTop, AluPalette.ModuleBottom },
-                new float[] { 0f, 1f });
+            AluSurface.FillVerticalGradient(g, module, AluPalette.ModuleStops, AluPalette.TwoStopPositions);
 
             AluSurface.DrawInnerShadowTop(g, module, m.ModuleRadiusPx, AluPalette.ShadowStrong, 9f * s);
 
@@ -95,12 +82,12 @@ namespace KeyboardLock.Alu
             float ry = chassis.Height * 0.65f;
 
             // 68% 圈：中心 alpha .36 → 外缘 0
-            DrawRadialAlpha(g, cx, cy, rx * 0.68f, ry * 0.68f, 92, 0);
+            DrawRadialAlpha(g, cx, cy, rx * 0.68f, ry * 0.68f, 92, TopHighlightOuterSoft);
             // 38% 圈：中心 alpha .95 → 外缘 .36
-            DrawRadialAlpha(g, cx, cy, rx * 0.38f, ry * 0.38f, 242, 92);
+            DrawRadialAlpha(g, cx, cy, rx * 0.38f, ry * 0.38f, 242, TopHighlightOuterCore);
         }
 
-        private static void DrawRadialAlpha(Graphics g, float cx, float cy, float rx, float ry, int centerAlpha, int edgeAlpha)
+        private static void DrawRadialAlpha(Graphics g, float cx, float cy, float rx, float ry, int centerAlpha, Color[] surround)
         {
             if (rx <= 0f || ry <= 0f)
                 return;
@@ -113,7 +100,7 @@ namespace KeyboardLock.Alu
                 {
                     brush.CenterPoint = new PointF(cx, cy);
                     brush.CenterColor = Color.FromArgb(centerAlpha, 255, 255, 255);
-                    brush.SurroundColors = new Color[] { Color.FromArgb(edgeAlpha, 255, 255, 255) };
+                    brush.SurroundColors = surround;
                     g.FillEllipse(brush, ellipse);
                 }
             }
@@ -124,18 +111,15 @@ namespace KeyboardLock.Alu
             RectangleF bar = m.TitleBar;
             float s = m.Scale;
 
-            AluSurface.FillVerticalGradient(
-                g, bar,
-                new Color[] { AluPalette.TitleBarTop, AluPalette.TitleBarMiddle, AluPalette.TitleBarBottom },
-                new float[] { 0f, 0.55f, 1f });
+            AluSurface.FillVerticalGradient(g, bar, AluPalette.TitleBarStops, AluPalette.TitleBarPositions);
 
-            AluSurface.DrawInnerTopLight(g, bar, m.ChassisRadiusPx - s, AluPalette.Alpha("#FFFFFF", 0.98), 1.5f * s);
+            AluSurface.DrawInnerTopLight(g, bar, m.ChassisRadiusPx - s, AluPalette.TitleBarBevel, 1.5f * s);
 
             // 底部分隔线 + 线下的一道白色高光
             using (SolidBrush borderBrush = new SolidBrush(AluPalette.TitleBarBorder))
                 g.FillRectangle(borderBrush, bar.X, bar.Bottom - 1f * s, bar.Width, 1f * s);
 
-            using (SolidBrush shadowBrush = new SolidBrush(AluPalette.Alpha("#FFFFFF", 0.85)))
+            using (SolidBrush shadowBrush = new SolidBrush(AluPalette.TitleBarUnderline))
                 g.FillRectangle(shadowBrush, bar.X, bar.Bottom, bar.Width, 1f * s);
         }
     }

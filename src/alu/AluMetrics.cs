@@ -28,7 +28,6 @@ namespace KeyboardLock.Alu
         private const float KeycapRadius = 5f;
 
         public readonly float Scale;
-        public readonly Size Size;
 
         public readonly RectangleF Chassis;
         public readonly RectangleF ChassisContent;
@@ -46,8 +45,6 @@ namespace KeyboardLock.Alu
         public readonly RectangleF Rail;
         public readonly RectangleF ThumbFree;
         public readonly RectangleF ThumbHold;
-        public readonly RectangleF RailLabelFree;
-        public readonly RectangleF RailLabelHold;
 
         public readonly RectangleF LedBezel;
         public readonly RectangleF LedLens;
@@ -58,11 +55,6 @@ namespace KeyboardLock.Alu
         public readonly RectangleF MainButton;
 
         public readonly RectangleF Footer;
-        public readonly RectangleF KeycapCtrl;
-        public readonly RectangleF KeycapAlt;
-        public readonly RectangleF KeycapU;
-        public readonly RectangleF PlusFirst;
-        public readonly RectangleF PlusSecond;
         public readonly RectangleF EngravedNote;
 
         public readonly float ChassisRadiusPx;
@@ -77,19 +69,9 @@ namespace KeyboardLock.Alu
         public readonly float KeyWellRadiusPx;
         public readonly float KeycapRadiusPx;
 
-        /// <summary>键帽与键帽井的额外内边距（CSS：well padding 2 / border 1）。</summary>
-        public const float KeyWellPadding = 3f;
-
-        /// <summary>滑块在导轨上的位移（未锁定 → 已锁定）。</summary>
-        public float ThumbTravel
-        {
-            get { return ThumbHold.X - ThumbFree.X; }
-        }
-
         private AluMetrics(float scale, Size size)
         {
             Scale = scale;
-            Size = size;
 
             Chassis = new RectangleF(0f, 0f, size.Width, size.Height);
             ChassisContent = new RectangleF(1f * scale, 1f * scale, (DesignWidth - 2f) * scale, (DesignHeight - 2f) * scale);
@@ -109,8 +91,6 @@ namespace KeyboardLock.Alu
             Rail = Rect(27f, 61f, 166f, 66f, scale);
             ThumbFree = Rect(27f, 61f, 120f, 66f, scale);
             ThumbHold = Rect(73f, 61f, 120f, 66f, scale);
-            RailLabelFree = Rect(35f, 82f, 60f, 14f, scale);
-            RailLabelHold = Rect(124f, 82f, 60f, 14f, scale);
 
             LedBezel = Rect(217f, 85f, 18f, 18f, scale);
             LedLens = Rect(219f, 87f, 12f, 12f, scale);
@@ -120,13 +100,8 @@ namespace KeyboardLock.Alu
             MainSlot = Rect(19f, 149f, 362f, 63f, scale);
             MainButton = Rect(22f, 153f, 356f, 54f, scale);
 
+            // 页脚的三颗键帽按字形宽度现场排布（见 AluFooterPainter），这里只给出页脚区与右侧说明。
             Footer = Rect(19f, 224f, 362f, 34f, scale);
-            // 键帽宽度按字形宽度计算（见 AluFooterPainter），此处先给默认位。
-            KeycapCtrl = Rect(22f, 227f, 40f, 28f, scale);
-            KeycapAlt = Rect(84f, 227f, 36f, 28f, scale);
-            KeycapU = Rect(142f, 227f, 36f, 28f, scale);
-            PlusFirst = Rect(70f, 232f, 8f, 14f, scale);
-            PlusSecond = Rect(127f, 232f, 8f, 14f, scale);
             EngravedNote = Rect(240f, 232f, 140f, 14f, scale);
 
             ChassisRadiusPx = ChassisRadius * scale;
@@ -154,18 +129,6 @@ namespace KeyboardLock.Alu
         private static RectangleF Rect(float x, float y, float w, float h, float scale)
         {
             return new RectangleF(x * scale, y * scale, w * scale, h * scale);
-        }
-
-        /// <summary>把设计稿坐标换算到设备像素。</summary>
-        public PointF Point(float x, float y)
-        {
-            return new PointF(x * Scale, y * Scale);
-        }
-
-        /// <summary>把设计稿长度换算到设备像素。</summary>
-        public float Length(float designValue)
-        {
-            return designValue * Scale;
         }
     }
 }

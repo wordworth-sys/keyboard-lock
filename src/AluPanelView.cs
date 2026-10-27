@@ -2,8 +2,6 @@ using System;
 using System.Drawing;
 using System.Windows.Forms;
 
-using KeyboardLock.Alu;
-
 namespace KeyboardLock.Alu
 {
     /// <summary>
@@ -98,7 +96,7 @@ namespace KeyboardLock.Alu
             if (target == AluHitTarget.TitleBar)
             {
                 // 交给系统原生移动循环，行为与拖动标题栏一致。
-                OnDragRequested();
+                Raise(DragRequested);
                 return;
             }
 
@@ -131,14 +129,14 @@ namespace KeyboardLock.Alu
             switch (released)
             {
                 case AluHitTarget.Minimize:
-                    OnMinimizeRequested();
+                    Raise(MinimizeRequested);
                     break;
                 case AluHitTarget.CloseToTray:
-                    OnCloseToTrayRequested();
+                    Raise(CloseToTrayRequested);
                     break;
                 case AluHitTarget.ToggleModule:
                 case AluHitTarget.MainButton:
-                    OnToggleRequested();
+                    Raise(ToggleRequested);
                     break;
             }
         }
@@ -169,30 +167,8 @@ namespace KeyboardLock.Alu
             base.Dispose(disposing);
         }
 
-        private void OnToggleRequested()
+        private void Raise(EventHandler handler)
         {
-            EventHandler handler = ToggleRequested;
-            if (handler != null)
-                handler(this, EventArgs.Empty);
-        }
-
-        private void OnMinimizeRequested()
-        {
-            EventHandler handler = MinimizeRequested;
-            if (handler != null)
-                handler(this, EventArgs.Empty);
-        }
-
-        private void OnCloseToTrayRequested()
-        {
-            EventHandler handler = CloseToTrayRequested;
-            if (handler != null)
-                handler(this, EventArgs.Empty);
-        }
-
-        private void OnDragRequested()
-        {
-            EventHandler handler = DragRequested;
             if (handler != null)
                 handler(this, EventArgs.Empty);
         }
