@@ -10,7 +10,7 @@ namespace KeyboardLock.Alu
     /// 分层原则：
     ///   · 本类只负责状态、命中测试与绘制编排；
     ///   · 每个视觉区块由 src/alu/ 下的独立 Painter 负责，互不直接依赖；
-    ///   · 布局坐标一律来自 <see cref="AluMetrics"/>，绘制代码不自己算位置。
+    ///   · 布局矩形一律来自 <see cref="AluMetrics"/>；只有按字形动态排布的局部（页脚键帽、刻度标签）例外。
     ///
     /// 局部重绘：<see cref="Draw"/> 接收失效矩形，与之不相交的区块整段跳过。
     /// 悬停窗口控制键 / 按下主键这类高频小变化，只重画对应区块（见 <see cref="WindowControlsBounds"/>）。

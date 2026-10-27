@@ -4,7 +4,7 @@ using System.Drawing;
 namespace KeyboardLock.Alu
 {
     /// <summary>
-    /// 面板配色：与 v1.3 的 CSS 设计稿一一对应（CSS 十六进制 → GDI+ Color）。
+    /// 面板配色：沿用设计稿的 CSS 十六进制值（→ GDI+ Color）。
     /// 集中放在一处，方便和设计稿逐项比对；不要在绘制代码里散落硬编码颜色。
     ///
     /// 所有颜色与渐变 stops 都是进程生命周期内只解析一次的静态只读值：
