@@ -15,8 +15,8 @@ namespace KeyboardLock.Alu
             RectangleF window = m.StatusWindow;
 
             // 玻璃面板：底色渐变 + 一道斜向反光
-            AluSurface.FillVerticalGradient(g, window, AluPalette.StatusStops, AluPalette.TwoStopPositions);
-            AluSurface.FillVerticalGradient(g, window, AluPalette.StatusGlassStops, AluPalette.StatusGlassPositions);
+            AluSurface.FillRoundedVerticalGradient(g, window, m.StatusRadiusPx, AluPalette.StatusStops, AluPalette.TwoStopPositions);
+            AluSurface.FillRoundedVerticalGradient(g, window, m.StatusRadiusPx, AluPalette.StatusGlassStops, AluPalette.StatusGlassPositions);
 
             AluSurface.DrawInnerShadowTop(g, window, m.StatusRadiusPx, AluPalette.ShadowStrong, 6f * m.Scale);
 
@@ -50,11 +50,11 @@ namespace KeyboardLock.Alu
                 glow = AluPalette.LedLensGreenMid;
             }
 
-            // 灯座下沿的一道白色高光
+            // 圆形灯座下沿的一道白色高光
             using (SolidBrush highlightBrush = new SolidBrush(AluPalette.LedBezelHighlight))
-                g.FillRectangle(highlightBrush, bezel.X, bezel.Bottom, bezel.Width, 1f * m.Scale);
+                g.FillEllipse(highlightBrush, bezel.X, bezel.Y + 1f * m.Scale, bezel.Width, bezel.Height);
 
-            AluSurface.FillVerticalGradient(g, bezel, AluPalette.LedBezelStops, AluPalette.TwoStopPositions);
+            AluSurface.FillRoundedVerticalGradient(g, bezel, bezel.Width / 2f, AluPalette.LedBezelStops, AluPalette.TwoStopPositions);
             AluSurface.DrawInnerShadowTop(g, bezel, bezel.Width / 2f, AluPalette.LedBezelInnerShadow, 3f * m.Scale);
 
             // 灯罩外的辉光
@@ -100,7 +100,7 @@ namespace KeyboardLock.Alu
                 AluTextAlign.Left, 0f, Color.Transparent, 0f);
 
             AluText.Draw(g, en, fonts.StatusEn, enColor, m.StatusTextEn,
-                AluTextAlign.Left, 1.33f, Color.Transparent, 0f);
+                AluTextAlign.Left, 1.33f * m.Scale, Color.Transparent, 0f);
         }
     }
 }

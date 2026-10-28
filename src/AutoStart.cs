@@ -174,24 +174,13 @@ internal static class AutoStart
         }
     }
 
+    private delegate T ShortcutOperation<T>(Type shortcutType, object shortcut);
+
     /// <summary>用 WSH（系统自带、无需额外依赖）写 .lnk，避免引入 COM 互操作样板代码。</summary>
     private static bool WriteShortcut(string shortcutPath, string targetPath, string workingDir)
     {
-        object shell = null;
-        object shortcut = null;
-        try
+        return WithShortcut(shortcutPath, delegate(Type sc, object shortcut)
         {
-            Type shellType = Type.GetTypeFromProgID("WScript.Shell");
-            if (shellType == null)
-                return false;
-
-            shell = Activator.CreateInstance(shellType);
-            shortcut = shellType.InvokeMember(
-                "CreateShortcut", BindingFlags.InvokeMethod, null, shell, new object[] { shortcutPath });
-            if (shortcut == null)
-                return false;
-
-            Type sc = shortcut.GetType();
             Set(sc, shortcut, "TargetPath", targetPath);
             Set(sc, shortcut, "Arguments", SilentArgument);
             Set(sc, shortcut, "WorkingDirectory", workingDir);
@@ -199,24 +188,23 @@ internal static class AutoStart
             Set(sc, shortcut, "Description", Description);
             sc.InvokeMember("Save", BindingFlags.InvokeMethod, null, shortcut, null);
             return true;
-        }
-        catch
-        {
-            return false;
-        }
-        finally
-        {
-            Release(shortcut);
-            Release(shell);
-        }
+        }, false);
     }
 
     /// <summary>读出快捷方式指向的目标（读不到时返回 null）。</summary>
     private static string ReadTarget()
     {
-        string path = ShortcutPath;
-        if (string.IsNullOrEmpty(path))
-            return null;
+        return WithShortcut(ShortcutPath, delegate(Type sc, object shortcut)
+        {
+            object value = sc.InvokeMember("TargetPath", BindingFlags.GetProperty, null, shortcut, null);
+            return value as string;
+        }, null);
+    }
+
+    private static T WithShortcut<T>(string shortcutPath, ShortcutOperation<T> operation, T fallback)
+    {
+        if (string.IsNullOrEmpty(shortcutPath))
+            return fallback;
 
         object shell = null;
         object shortcut = null;
@@ -224,21 +212,19 @@ internal static class AutoStart
         {
             Type shellType = Type.GetTypeFromProgID("WScript.Shell");
             if (shellType == null)
-                return null;
+                return fallback;
 
             shell = Activator.CreateInstance(shellType);
             shortcut = shellType.InvokeMember(
-                "CreateShortcut", BindingFlags.InvokeMethod, null, shell, new object[] { path });
+                "CreateShortcut", BindingFlags.InvokeMethod, null, shell, new object[] { shortcutPath });
             if (shortcut == null)
-                return null;
+                return fallback;
 
-            object value = shortcut.GetType().InvokeMember(
-                "TargetPath", BindingFlags.GetProperty, null, shortcut, null);
-            return value as string;
+            return operation(shortcut.GetType(), shortcut);
         }
         catch
         {
-            return null;
+            return fallback;
         }
         finally
         {

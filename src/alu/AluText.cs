@@ -33,13 +33,18 @@ namespace KeyboardLock.Alu
             if (string.IsNullOrEmpty(text))
                 return 0f;
 
+            StringFormat format = Format(AluTextAlign.Left);
+            if (letterSpacing == 0f)
+                return g.MeasureString(text, font, int.MaxValue, format).Width;
+
             string[] glyphs;
             float[] widths;
-            return Measure(g, text, font, letterSpacing, out glyphs, out widths);
+            return Measure(g, text, font, letterSpacing, format, out glyphs, out widths);
         }
 
         /// <summary>
-        /// 在矩形里排版一段文字：垂直居中，水平按 align 对齐，可选 1px 投影。
+        /// 在矩形里排版一段文字：垂直居中，水平按 align 对齐，可选投影。
+        /// 字间距为 0 时直接整串绘制（零切分分配、零逐字测量）；非零字间距时才走逐字排版。
         /// </summary>
         public static void Draw(Graphics g, string text, Font font, Color color, RectangleF rect,
             AluTextAlign align, float letterSpacing, Color shadowColor, float shadowOffsetY)
@@ -47,9 +52,31 @@ namespace KeyboardLock.Alu
             if (string.IsNullOrEmpty(text) || font == null)
                 return;
 
+            TextRenderingHint previousHint = g.TextRenderingHint;
+            g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+
+            if (letterSpacing == 0f)
+            {
+                StringFormat wholeFormat = Format(align);
+                using (SolidBrush brush = new SolidBrush(shadowColor.A > 0 ? shadowColor : color))
+                {
+                    if (shadowColor.A > 0)
+                    {
+                        RectangleF shadowRect = new RectangleF(rect.X, rect.Y + shadowOffsetY, rect.Width, rect.Height);
+                        g.DrawString(text, font, brush, shadowRect, wholeFormat);
+                        brush.Color = color;
+                    }
+                    g.DrawString(text, font, brush, rect, wholeFormat);
+                }
+
+                g.TextRenderingHint = previousHint;
+                return;
+            }
+
+            StringFormat glyphFormat = Format(AluTextAlign.Left);
             string[] glyphs;
             float[] widths;
-            float width = Measure(g, text, font, letterSpacing, out glyphs, out widths);
+            float width = Measure(g, text, font, letterSpacing, glyphFormat, out glyphs, out widths);
 
             float startX;
             if (align == AluTextAlign.Center)
@@ -59,17 +86,14 @@ namespace KeyboardLock.Alu
             else
                 startX = rect.Left;
 
-            TextRenderingHint previousHint = g.TextRenderingHint;
-            g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
-
-            StringFormat format = Format();
-            using (SolidBrush brush = new SolidBrush(shadowColor))
+            using (SolidBrush brush = new SolidBrush(shadowColor.A > 0 ? shadowColor : color))
             {
                 if (shadowColor.A > 0)
-                    DrawRun(g, text.Length, glyphs, widths, font, brush, startX, rect.Top + shadowOffsetY, rect.Height, letterSpacing, format);
-
-                brush.Color = color;
-                DrawRun(g, text.Length, glyphs, widths, font, brush, startX, rect.Top, rect.Height, letterSpacing, format);
+                {
+                    DrawRun(g, text.Length, glyphs, widths, font, brush, startX, rect.Top + shadowOffsetY, rect.Height, letterSpacing, glyphFormat);
+                    brush.Color = color;
+                }
+                DrawRun(g, text.Length, glyphs, widths, font, brush, startX, rect.Top, rect.Height, letterSpacing, glyphFormat);
             }
 
             g.TextRenderingHint = previousHint;
@@ -85,8 +109,8 @@ namespace KeyboardLock.Alu
             }
         }
 
-        /// <summary>逐字测量，结果写入暂存区并返回总宽（含字间距）。</summary>
-        private static float Measure(Graphics g, string text, Font font, float letterSpacing,
+        /// <summary>逐字测量，结果写入暂存区并返回总宽（含字间距）。必须使用带 MeasureTrailingSpaces 的 format，否则空格宽度为 0。</summary>
+        private static float Measure(Graphics g, string text, Font font, float letterSpacing, StringFormat format,
             out string[] glyphs, out float[] widths)
         {
             int n = text.Length;
@@ -111,7 +135,7 @@ namespace KeyboardLock.Alu
             {
                 string ch = text[i].ToString();
                 glyphs[i] = ch;
-                widths[i] = g.MeasureString(ch, font, int.MaxValue, StringFormat.GenericTypographic).Width;
+                widths[i] = g.MeasureString(ch, font, int.MaxValue, format).Width;
                 total += widths[i];
             }
             if (n > 1)
@@ -119,14 +143,22 @@ namespace KeyboardLock.Alu
             return total;
         }
 
-        private static StringFormat Format()
+        private static StringFormat Format(AluTextAlign align)
         {
             if (formatScratch == null)
             {
                 formatScratch = new StringFormat(StringFormat.GenericTypographic);
-                formatScratch.FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces;
+                formatScratch.FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces | StringFormatFlags.NoClip;
                 formatScratch.LineAlignment = StringAlignment.Center;
             }
+
+            if (align == AluTextAlign.Center)
+                formatScratch.Alignment = StringAlignment.Center;
+            else if (align == AluTextAlign.Right)
+                formatScratch.Alignment = StringAlignment.Far;
+            else
+                formatScratch.Alignment = StringAlignment.Near;
+
             return formatScratch;
         }
     }

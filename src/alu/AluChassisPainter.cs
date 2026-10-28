@@ -14,43 +14,53 @@ namespace KeyboardLock.Alu
         private static readonly Color[] TopHighlightOuterSoft = { Color.FromArgb(0, 255, 255, 255) };
         private static readonly Color[] TopHighlightOuterCore = { Color.FromArgb(92, 255, 255, 255) };
 
-        public static void Draw(Graphics g, AluMetrics m)
+        public static void Draw(Graphics g, AluMetrics m, RectangleF clip)
         {
             RectangleF chassis = m.Chassis;
             RectangleF content = m.ChassisContent;
             float radius = m.ChassisRadiusPx;
             float s = m.Scale;
 
-            GraphicsState clip = AluSurface.ClipRounded(g, chassis, radius);
+            GraphicsState savedClip = AluSurface.ClipRounded(g, chassis, radius);
 
             // 1. 机身底色：竖直多段渐变
             AluSurface.FillVerticalGradient(g, chassis, AluPalette.ChassisStops, AluPalette.ChassisPositions);
 
             // 2. 顶部径向高光（CSS: radial-gradient(125% 65% at 50% -6%, ...)）
-            DrawTopHighlight(g, chassis);
+            // 外圈椭圆下沿最远到 0.382 * Height，下半部局部重绘时整段跳过。
+            if (clip.Top < chassis.Top + chassis.Height * 0.40f)
+                DrawTopHighlight(g, chassis);
 
             // 3. 左右边缘反光（CSS: linear-gradient(90deg, ...)）
             AluSurface.FillHorizontalGradient(g, chassis, AluPalette.ChassisEdgeStops, AluPalette.ChassisEdgePositions);
 
             // 4. 内斜面：顶部高光、左右细白线、底部压边
-            AluSurface.DrawInnerTopLight(g, content, radius - s, AluPalette.ChassisBevelTop, 2f * s);
+            if (clip.Top <= content.Y + 3f * s)
+                AluSurface.DrawInnerTopLight(g, content, radius - s, AluPalette.ChassisBevelTop, 2f * s);
 
-            using (SolidBrush sideBrush = new SolidBrush(AluPalette.ChassisBevelSide))
+            if (clip.Left <= content.X + 2f * s || clip.Right >= content.Right - 2f * s)
             {
-                g.FillRectangle(sideBrush, content.X, content.Y, 1.5f * s, content.Height);
-                g.FillRectangle(sideBrush, content.Right - 1.5f * s, content.Y, 1.5f * s, content.Height);
+                using (SolidBrush sideBrush = new SolidBrush(AluPalette.ChassisBevelSide))
+                {
+                    g.FillRectangle(sideBrush, content.X, content.Y, 1.5f * s, content.Height);
+                    g.FillRectangle(sideBrush, content.Right - 1.5f * s, content.Y, 1.5f * s, content.Height);
+                }
             }
 
-            using (SolidBrush bottomBrush = new SolidBrush(AluPalette.ChassisBottomRidge))
-                g.FillRectangle(bottomBrush, content.X + 2f * s, content.Bottom - 3f * s, content.Width - 4f * s, 3f * s);
+            if (clip.Bottom >= content.Bottom - 5f * s)
+            {
+                using (SolidBrush bottomBrush = new SolidBrush(AluPalette.ChassisBottomRidge))
+                    g.FillRectangle(bottomBrush, content.X + 2f * s, content.Bottom - 3f * s, content.Width - 4f * s, 3f * s);
 
-            using (SolidBrush lineBrush = new SolidBrush(AluPalette.ChassisBevelBottomLine))
-                g.FillRectangle(lineBrush, content.X + 2f * s, content.Bottom - 4f * s, content.Width - 4f * s, 1f * s);
+                using (SolidBrush lineBrush = new SolidBrush(AluPalette.ChassisBevelBottomLine))
+                    g.FillRectangle(lineBrush, content.X + 2f * s, content.Bottom - 4f * s, content.Width - 4f * s, 1f * s);
+            }
 
-            // 5. 标题栏底色
-            DrawTitleBar(g, m);
+            // 5. 标题栏底色（含底部分隔线与线下 1px 高光）
+            if (clip.Top <= m.TitleBar.Bottom + 2f * s)
+                DrawTitleBar(g, m);
 
-            g.Restore(clip);
+            g.Restore(savedClip);
 
             // 6. 外边框
             RectangleF border = new RectangleF(chassis.X + 0.5f, chassis.Y + 0.5f, chassis.Width - 1f, chassis.Height - 1f);
@@ -66,7 +76,7 @@ namespace KeyboardLock.Alu
             RectangleF module = m.Module;
             float s = m.Scale;
 
-            AluSurface.FillVerticalGradient(g, module, AluPalette.ModuleStops, AluPalette.TwoStopPositions);
+            AluSurface.FillRoundedVerticalGradient(g, module, m.ModuleRadiusPx, AluPalette.ModuleStops, AluPalette.TwoStopPositions);
 
             AluSurface.DrawInnerShadowTop(g, module, m.ModuleRadiusPx, AluPalette.ShadowStrong, 9f * s);
 

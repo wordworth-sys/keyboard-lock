@@ -10,24 +10,26 @@ namespace KeyboardLock.Alu
     internal static class AluTitleBarPainter
     {
         public static void Draw(Graphics g, AluMetrics m, AluFonts fonts, AluPanelState state,
-            bool hoverMinimize, bool hoverClose)
+            bool hoverMinimize, bool hoverClose, RectangleF clip)
         {
-            DrawModelTag(g, m, fonts);
-            DrawWindowTitle(g, m, fonts, state);
+            if (clip.IntersectsWith(m.ModelTag))
+                DrawModelTag(g, m, fonts);
+            if (clip.IntersectsWith(m.WindowTitle))
+                DrawWindowTitle(g, m, fonts, state);
             DrawWindowControls(g, m, hoverMinimize, hoverClose);
         }
 
         private static void DrawModelTag(Graphics g, AluMetrics m, AluFonts fonts)
         {
             AluText.Draw(g, "ALU-01", fonts.ModelTag, AluPalette.ModelTagText, m.ModelTag,
-                AluTextAlign.Left, 0f, AluPalette.ModelTagTextShadow, 1f);
+                AluTextAlign.Left, 0f, AluPalette.ModelTagTextShadow, 1f * m.Scale);
         }
 
         private static void DrawWindowTitle(Graphics g, AluMetrics m, AluFonts fonts, AluPanelState state)
         {
             string title = state == AluPanelState.Locked ? "键盘锁 — 已锁定" : "键盘锁";
             AluText.Draw(g, title, fonts.Title, AluPalette.TitleText, m.WindowTitle,
-                AluTextAlign.Center, 0f, AluPalette.TitleTextShadow, 1f);
+                AluTextAlign.Center, 0f, AluPalette.TitleTextShadow, 1f * m.Scale);
         }
 
         /// <summary>窗口控制键区域（铝槽 + 两颗键）。悬停局部重绘时只需刷新这一块。</summary>
@@ -36,7 +38,7 @@ namespace KeyboardLock.Alu
             RectangleF slot = m.WinSlot;
 
             // 下沉的铝槽
-            AluSurface.FillVerticalGradient(g, slot, AluPalette.WinSlotStops, AluPalette.TwoStopPositions);
+            AluSurface.FillRoundedVerticalGradient(g, slot, m.WinSlotRadiusPx, AluPalette.WinSlotStops, AluPalette.TwoStopPositions);
             AluSurface.DrawInnerShadowTop(g, slot, m.WinSlotRadiusPx, AluPalette.WinSlotInnerShadow, 3f * m.Scale);
 
             AluSurface.DrawTopBand(g, slot, m.WinSlotRadiusPx, AluPalette.WinSlotBorderTop, 1f * m.Scale, 1f * m.Scale);
@@ -68,7 +70,7 @@ namespace KeyboardLock.Alu
                 glyph = AluPalette.WinGlyph;
             }
 
-            AluSurface.FillVerticalGradient(g, key, stops, AluPalette.WinKeyPositions);
+            AluSurface.FillRoundedVerticalGradient(g, key, radius, stops, AluPalette.WinKeyPositions);
 
             AluSurface.DrawInnerTopLight(g, key, radius, closeHot ? AluPalette.CloseHoverTopLight : AluPalette.WinKeyTopLight, 1f * m.Scale);
             AluSurface.DrawInnerBottomEdge(g, key, radius, closeHot ? AluPalette.CloseHoverInset : AluPalette.WinKeyInset, 1.5f * m.Scale);

@@ -44,42 +44,30 @@ namespace KeyboardLock.Alu
                 g.DrawPath(pen, path);
         }
 
-        /// <summary>把后续绘制限制在圆角区域内，返回用于还原的 GraphicsState。</summary>
+        /// <summary>把后续绘制限制在圆角区域内（与现有裁剪区求交，绝不冲掉局部重绘的 clip），返回用于还原的 GraphicsState。</summary>
         public static GraphicsState ClipRounded(Graphics g, RectangleF r, float radius)
         {
             GraphicsState state = g.Save();
             using (GraphicsPath path = RoundedPath(r, radius))
-                g.SetClip(path);
+                g.SetClip(path, CombineMode.Intersect);
             return state;
         }
 
-        /// <summary>竖直多段渐变（各段之间重叠 1px，避免出现接缝）。</summary>
+        /// <summary>竖直多段渐变（单把画刷 ColorBlend 插值，避免多段重叠接缝与重复创建画刷）。</summary>
         public static void FillVerticalGradient(Graphics g, RectangleF r, Color[] stops, float[] positions)
         {
-            if (r.Width <= 0f || r.Height <= 0f)
-                return;
-
-            if (stops.Length == 1)
-            {
-                using (SolidBrush b = new SolidBrush(stops[0]))
-                    g.FillRectangle(b, r);
-                return;
-            }
-
-            for (int i = 0; i < stops.Length - 1; i++)
-            {
-                float top = r.Top + r.Height * positions[i];
-                float bottom = r.Top + r.Height * positions[i + 1];
-                RectangleF band = new RectangleF(r.X, top, r.Width, Math.Max(1f, bottom - top + 1f));
-                using (LinearGradientBrush brush = new LinearGradientBrush(band, stops[i], stops[i + 1], LinearGradientMode.Vertical))
-                    g.FillRectangle(brush, band);
-            }
+            FillGradient(g, r, stops, positions, LinearGradientMode.Vertical);
         }
 
         /// <summary>水平多段渐变（左右边缘的高光 / 暗边）。</summary>
         public static void FillHorizontalGradient(Graphics g, RectangleF r, Color[] stops, float[] positions)
         {
-            if (r.Width <= 0f || r.Height <= 0f)
+            FillGradient(g, r, stops, positions, LinearGradientMode.Horizontal);
+        }
+
+        private static void FillGradient(Graphics g, RectangleF r, Color[] stops, float[] positions, LinearGradientMode mode)
+        {
+            if (r.Width <= 0f || r.Height <= 0f || stops.Length == 0)
                 return;
 
             if (stops.Length == 1)
@@ -89,14 +77,22 @@ namespace KeyboardLock.Alu
                 return;
             }
 
-            for (int i = 0; i < stops.Length - 1; i++)
+            using (LinearGradientBrush brush = CreateGradientBrush(r, stops, positions, mode))
+                g.FillRectangle(brush, r);
+        }
+
+        private static LinearGradientBrush CreateGradientBrush(RectangleF r, Color[] stops, float[] positions, LinearGradientMode mode)
+        {
+            LinearGradientBrush brush = new LinearGradientBrush(r, stops[0], stops[stops.Length - 1], mode);
+            brush.WrapMode = WrapMode.TileFlipXY;
+            if (stops.Length > 2)
             {
-                float left = r.Left + r.Width * positions[i];
-                float right = r.Left + r.Width * positions[i + 1];
-                RectangleF band = new RectangleF(left, r.Top, Math.Max(1f, right - left + 1f), r.Height);
-                using (LinearGradientBrush brush = new LinearGradientBrush(band, stops[i], stops[i + 1], LinearGradientMode.Horizontal))
-                    g.FillRectangle(brush, band);
+                ColorBlend blend = new ColorBlend(stops.Length);
+                blend.Colors = stops;
+                blend.Positions = positions;
+                brush.InterpolationColors = blend;
             }
+            return brush;
         }
 
         /// <summary>
@@ -198,7 +194,7 @@ namespace KeyboardLock.Alu
             GraphicsState state = g.Save();
             using (GraphicsPath path = RoundedPath(r, radius))
             {
-                g.SetClip(path);
+                g.SetClip(path, CombineMode.Intersect);
                 g.SetClip(new RectangleF(r.X, r.Y, r.Width, thickness), CombineMode.Intersect);
                 using (Pen pen = new Pen(color, thickness))
                     g.DrawPath(pen, path);
@@ -215,7 +211,7 @@ namespace KeyboardLock.Alu
             GraphicsState state = g.Save();
             using (GraphicsPath path = RoundedPath(r, radius))
             {
-                g.SetClip(path);
+                g.SetClip(path, CombineMode.Intersect);
                 g.SetClip(new RectangleF(r.X, r.Bottom - thickness, r.Width, thickness), CombineMode.Intersect);
                 using (Pen pen = new Pen(color, thickness))
                     g.DrawPath(pen, path);
@@ -252,7 +248,7 @@ namespace KeyboardLock.Alu
             GraphicsState state = g.Save();
             using (GraphicsPath path = RoundedPath(r, radius))
             {
-                g.SetClip(path);
+                g.SetClip(path, CombineMode.Intersect);
                 using (SolidBrush brush = new SolidBrush(color))
                     g.FillRectangle(brush, r.X + inset, r.Y, r.Width - inset * 2f, thickness);
             }
@@ -268,7 +264,7 @@ namespace KeyboardLock.Alu
             GraphicsState state = g.Save();
             using (GraphicsPath path = RoundedPath(r, radius))
             {
-                g.SetClip(path);
+                g.SetClip(path, CombineMode.Intersect);
                 using (SolidBrush brush = new SolidBrush(color))
                     g.FillRectangle(brush, r.X + inset, r.Bottom - thickness, r.Width - inset * 2f, thickness);
             }
@@ -289,15 +285,21 @@ namespace KeyboardLock.Alu
             g.Restore(state);
         }
 
-        /// <summary>圆角区域内的竖直渐变填充（圆角由裁剪保证）。</summary>
+        /// <summary>圆角区域内的竖直渐变填充（直接沿圆角路径抗锯齿填充，无直角外溢）。</summary>
         public static void FillRoundedVerticalGradient(Graphics g, RectangleF r, float radius, Color[] stops, float[] positions)
         {
-            if (r.Width <= 0f || r.Height <= 0f)
+            if (r.Width <= 0f || r.Height <= 0f || stops.Length == 0)
                 return;
 
-            GraphicsState state = ClipRounded(g, r, radius);
-            FillVerticalGradient(g, r, stops, positions);
-            g.Restore(state);
+            if (stops.Length == 1)
+            {
+                using (SolidBrush b = new SolidBrush(stops[0]))
+                    FillRounded(g, r, radius, b);
+                return;
+            }
+
+            using (LinearGradientBrush brush = CreateGradientBrush(r, stops, positions, LinearGradientMode.Vertical))
+                FillRounded(g, r, radius, brush);
         }
 
         /// <summary>竖直机械条纹（导轨拉丝）。</summary>

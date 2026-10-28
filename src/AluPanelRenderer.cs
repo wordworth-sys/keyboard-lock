@@ -93,8 +93,8 @@ namespace KeyboardLock.Alu
                 g.CompositingQuality = CompositingQuality.Default;
                 g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
 
-                // 机身底色永远要画（它是其它区块的背景）；GDI+ 会按 clip 裁掉看不见的部分。
-                AluChassisPainter.Draw(g, m);
+                // 机身底色是其它区块的背景，内部按 clip 跳过不相交的顶部高光、边线与标题栏底色。
+                AluChassisPainter.Draw(g, m, c);
 
                 if (c.IntersectsWith(m.Module))
                 {
@@ -110,7 +110,7 @@ namespace KeyboardLock.Alu
                     AluFooterPainter.Draw(g, m, fonts);
 
                 if (c.IntersectsWith(m.TitleBar))
-                    AluTitleBarPainter.Draw(g, m, fonts, State, HoverMinimize, HoverClose);
+                    AluTitleBarPainter.Draw(g, m, fonts, State, HoverMinimize, HoverClose, c);
             }
             finally
             {
@@ -137,9 +137,11 @@ namespace KeyboardLock.Alu
             return AluHitTarget.None;
         }
 
-        /// <summary>某个区域当前是否可交互（钩子不可用时锁定操作失效）。</summary>
+        /// <summary>某个区域当前是否可交互（空白区不可交互；钩子不可用时锁定操作失效）。</summary>
         public bool IsInteractive(AluHitTarget target)
         {
+            if (target == AluHitTarget.None)
+                return false;
             if (target == AluHitTarget.ToggleModule || target == AluHitTarget.MainButton)
                 return State != AluPanelState.Unavailable;
             return true;

@@ -32,23 +32,20 @@ namespace KeyboardLock.Alu
             if (!pressed)
                 AluSurface.DrawDropShadow(g, button, radius, AluPalette.ShadowSoft, 3f * m.Scale, 5f * m.Scale);
 
-            if (locked)
-                DrawLockedFace(g, m, button, radius);
-            else
-                DrawNormalFace(g, m, button, radius);
+            DrawFace(g, m, button, radius, locked);
 
             string label = disabled ? "键盘钩子安装失败" : (locked ? "解锁键盘" : "锁定键盘");
             Color textColor = disabled ? AluPalette.MainKeyDisabledText : (locked ? Color.White : AluPalette.MainKeyText);
             Color shadowColor = locked ? AluPalette.MainKeyLockedTextShadow : AluPalette.MainKeyTextShadow;
 
-            AluText.Draw(g, label, fonts.MainLabel, textColor, button, AluTextAlign.Center, 1.28f, shadowColor, 1f);
+            AluText.Draw(g, label, fonts.MainLabel, textColor, button, AluTextAlign.Center, 1.28f * m.Scale, shadowColor, 1f * m.Scale);
         }
 
         private static void DrawSlot(Graphics g, AluMetrics m)
         {
             RectangleF slot = m.MainSlot;
 
-            AluSurface.FillVerticalGradient(g, slot, AluPalette.MainSlotStops, AluPalette.TwoStopPositions);
+            AluSurface.FillRoundedVerticalGradient(g, slot, m.MainSlotRadiusPx, AluPalette.MainSlotStops, AluPalette.TwoStopPositions);
 
             AluSurface.DrawInnerShadowTop(g, slot, m.MainSlotRadiusPx, AluPalette.ShadowMedium, 4f * m.Scale);
 
@@ -56,31 +53,28 @@ namespace KeyboardLock.Alu
             AluSurface.DrawBottomBand(g, slot, m.MainSlotRadiusPx, AluPalette.MainSlotBorderBottom, 1.5f * m.Scale, 1f * m.Scale);
         }
 
-        private static void DrawNormalFace(Graphics g, AluMetrics m, RectangleF button, float radius)
+        private static void DrawFace(Graphics g, AluMetrics m, RectangleF button, float radius, bool locked)
         {
-            AluSurface.FillVerticalGradient(g, button, AluPalette.MainKeyStops, AluPalette.MainKeyPositions);
+            Color[] stops = locked ? AluPalette.MainKeyLockedStops : AluPalette.MainKeyStops;
+            float[] positions = locked ? AluPalette.MainKeyLockedPositions : AluPalette.MainKeyPositions;
+            Color glowCenter = locked ? AluPalette.MainKeyLockedGlow : Color.White;
+            Color[] glowOuter = locked ? LockedHighlightOuter : NormalHighlightOuter;
+            float glowRadius = locked ? 0.9f : 0.8f;
+            Color topLight = locked ? AluPalette.MainKeyLockedTopLight : AluPalette.MainKeyTopLight;
+            Color inset = locked ? AluPalette.MainKeyLockedInset : AluPalette.MainKeyInset;
+            Color border = locked ? AluPalette.MainKeyLockedBorder : AluPalette.MainKeyBorder;
 
-            // 顶部的一团白色高光（CSS: radial-gradient(80% 100% at 50% 0%, ...)）
-            DrawTopHighlight(g, button, Color.White, NormalHighlightOuter, 0.8f);
+            AluSurface.FillRoundedVerticalGradient(g, button, radius, stops, positions);
 
-            AluSurface.DrawInnerTopLight(g, button, radius, AluPalette.MainKeyTopLight, 1.5f * m.Scale);
-            AluSurface.DrawInnerBottomEdge(g, button, radius, AluPalette.MainKeyInset, 3.5f * m.Scale);
+            // 顶部高光椭圆上半截高出按钮顶边，必须裁在按钮圆角内，避免溢出到机身与凹槽模块。
+            GraphicsState clip = AluSurface.ClipRounded(g, button, radius);
+            DrawTopHighlight(g, button, glowCenter, glowOuter, glowRadius);
+            g.Restore(clip);
 
-            using (Pen pen = new Pen(AluPalette.MainKeyBorder, 1f))
-                AluSurface.DrawRounded(g, button, radius, pen);
-        }
+            AluSurface.DrawInnerTopLight(g, button, radius, topLight, 1.5f * m.Scale);
+            AluSurface.DrawInnerBottomEdge(g, button, radius, inset, 3.5f * m.Scale);
 
-        private static void DrawLockedFace(Graphics g, AluMetrics m, RectangleF button, float radius)
-        {
-            AluSurface.FillVerticalGradient(g, button, AluPalette.MainKeyLockedStops, AluPalette.MainKeyLockedPositions);
-
-            // 锁定态是一层淡粉的高光，不是白光（CSS: rgba(255,185,165,.5)）
-            DrawTopHighlight(g, button, AluPalette.MainKeyLockedGlow, LockedHighlightOuter, 0.9f);
-
-            AluSurface.DrawInnerTopLight(g, button, radius, AluPalette.MainKeyLockedTopLight, 1.5f * m.Scale);
-            AluSurface.DrawInnerBottomEdge(g, button, radius, AluPalette.MainKeyLockedInset, 3.5f * m.Scale);
-
-            using (Pen pen = new Pen(AluPalette.MainKeyLockedBorder, 1f))
+            using (Pen pen = new Pen(border, 1f))
                 AluSurface.DrawRounded(g, button, radius, pen);
         }
 

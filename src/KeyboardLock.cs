@@ -35,9 +35,6 @@ public class KeyboardLockForm : Form
     [DllImport("gdi32.dll")]
     private static extern bool DeleteObject(IntPtr hObject);
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern bool SetWindowTextW(IntPtr hWnd, string lpString);
-
     [DllImport("user32.dll")]
     private static extern uint GetDpiForSystem();
 
@@ -75,8 +72,6 @@ public class KeyboardLockForm : Form
         float scale = GetSystemDpiScale();
         int w = (int)Math.Round(400 * scale);
         int h = (int)Math.Round(264 * scale);
-        Width = w;
-        Height = h;
         ClientSize = new Size(w, h);
 
         // 图标和圆角区域只创建一次：窗口句柄重建时 WinForms 会沿用这两个属性，不会重复分配 GDI 对象。
@@ -194,8 +189,6 @@ public class KeyboardLockForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-
-        SetWindowTextW(Handle, Text);
 
         try
         {
@@ -365,8 +358,6 @@ public class KeyboardLockForm : Form
         bool isLocked = KeyboardHook.IsLocked;
 
         Text = isLocked ? "键盘锁 — 已锁定" : "键盘锁";
-        if (IsHandleCreated)
-            SetWindowTextW(Handle, Text);
 
         if (mnuToggle != null)
             mnuToggle.Text = isLocked ? "解锁键盘 (Ctrl+Alt+U)" : "锁定键盘 (Ctrl+Alt+U)";
@@ -459,17 +450,19 @@ public class KeyboardLockForm : Form
             menuFont.Dispose();
             menuFont = null;
         }
+        // Control.Dispose 不会自动释放赋给窗体的托管 Region，先解绑再释放以避免 GDI 句柄泄漏。
+        if (Region != null)
+        {
+            Region oldRegion = Region;
+            Region = null;
+            oldRegion.Dispose();
+        }
 
         base.OnFormClosing(e);
     }
 
     protected override void WndProc(ref Message m)
     {
-        // 开机自启的那个实例已经跑着时，自启实例直接退出：这里什么都不做，
-        // 不能把已在托盘里静默运行的窗口弹出来。
-        if (Program.SilentInstanceMessage != 0 && m.Msg == Program.SilentInstanceMessage)
-            return;
-
         if (Program.ShowInstanceMessage != 0 && m.Msg == Program.ShowInstanceMessage)
         {
             ShowFromTray();
@@ -503,11 +496,6 @@ internal static class Program
     /// </summary>
     internal static readonly int ShowInstanceMessage = (int)RegisterWindowMessageW("KeyboardLock.ShowInstance.{6F1C2A4E}");
 
-    /// <summary>
-    /// 开机自启时用的消息：已有实例在跑就什么都不做，避免把静默驻留的窗口弹出来。
-    /// </summary>
-    internal static readonly int SilentInstanceMessage = (int)RegisterWindowMessageW("KeyboardLock.SilentInstance.{6F1C2A4E}");
-
     private static void ActivateExistingInstance()
     {
         if (ShowInstanceMessage == 0)
@@ -516,15 +504,6 @@ internal static class Program
         // 当前进程是用户刚双击启动的，持有前台权限；转交给第一个实例，它才能把窗口切到前台。
         AllowSetForegroundWindow(ASFW_ANY);
         PostMessageW(HWND_BROADCAST, ShowInstanceMessage, IntPtr.Zero, IntPtr.Zero);
-    }
-
-    /// <summary>静默唤醒：已有实例在跑就什么都不做，直接退出本进程。</summary>
-    private static void NotifyExistingInstanceSilently()
-    {
-        if (SilentInstanceMessage == 0)
-            return;
-
-        PostMessageW(HWND_BROADCAST, SilentInstanceMessage, IntPtr.Zero, IntPtr.Zero);
     }
 
     /// <summary>命令行里是否带了静默启动参数。</summary>
@@ -571,9 +550,8 @@ internal static class Program
         {
             if (!createdNew)
             {
-                if (silent)
-                    NotifyExistingInstanceSilently();
-                else
+                // 静默自启若遇到已运行的实例则直接退出，不把托盘里的窗口弹出来。
+                if (!silent)
                     ActivateExistingInstance();
                 return;
             }

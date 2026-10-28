@@ -29,7 +29,7 @@ namespace KeyboardLock.Alu
             DrawKey(g, m, fonts, x, uWidth, "U");
 
             AluText.Draw(g, "关闭窗口后仍在托盘运行", fonts.NoteLabel, AluPalette.EngravedNote, m.EngravedNote,
-                AluTextAlign.Right, 0f, AluPalette.EngravedNoteShadow, 1f);
+                AluTextAlign.Right, 0f, AluPalette.EngravedNoteShadow, 1f * m.Scale);
         }
 
         private static float KeycapWidth(Graphics g, AluMetrics m, AluFonts fonts, string label)
@@ -65,7 +65,7 @@ namespace KeyboardLock.Alu
 
             AluSurface.DrawDropShadow(g, cap, m.KeycapRadiusPx, AluPalette.KeycapShadow, 2f * s, 3f * s);
 
-            AluSurface.FillVerticalGradient(g, cap, AluPalette.KeycapStops, AluPalette.KeycapPositions);
+            AluSurface.FillRoundedVerticalGradient(g, cap, m.KeycapRadiusPx, AluPalette.KeycapStops, AluPalette.KeycapPositions);
 
             AluSurface.DrawInnerTopLight(g, cap, m.KeycapRadiusPx, AluPalette.KeycapTopLight, 1f * s);
 
@@ -88,7 +88,7 @@ namespace KeyboardLock.Alu
                 AluSurface.DrawRounded(g, cap, m.KeycapRadiusPx, pen);
 
             AluText.Draw(g, label, fonts.KeyLabel, AluPalette.KeycapText, cap,
-                AluTextAlign.Center, 0f, AluPalette.KeycapTextShadow, 1f);
+                AluTextAlign.Center, 0f, AluPalette.KeycapTextShadow, 1f * s);
 
             return well.Right + GroupGap * s;
         }
@@ -101,7 +101,7 @@ namespace KeyboardLock.Alu
 
             RectangleF rect = new RectangleF(x, m.Footer.Top + (m.Footer.Height - height) / 2f, width, height);
             AluText.Draw(g, "+", fonts.KeyLabel, AluPalette.PlusSign, rect,
-                AluTextAlign.Center, 0f, AluPalette.PlusSignShadow, 1f);
+                AluTextAlign.Center, 0f, AluPalette.PlusSignShadow, 1f * s);
 
             return rect.Right + GroupGap * s;
         }

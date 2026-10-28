@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 
 namespace KeyboardLock.Alu
 {
@@ -13,11 +14,13 @@ namespace KeyboardLock.Alu
         {
             RectangleF bay = m.SliderBay;
 
-            // 导轨底色 + 机械拉丝条纹
-            AluSurface.FillVerticalGradient(g, bay, AluPalette.RailStops, AluPalette.TwoStopPositions);
+            // 导轨底色 + 机械拉丝条纹（条纹裁在导轨圆角内）
+            AluSurface.FillRoundedVerticalGradient(g, bay, m.BayRadiusPx, AluPalette.RailStops, AluPalette.TwoStopPositions);
 
+            GraphicsState bayClip = AluSurface.ClipRounded(g, bay, m.BayRadiusPx);
             AluSurface.FillVerticalStripes(g, bay, AluPalette.RailStripeLight, AluPalette.RailStripeDark,
                 4f * m.Scale, 2f * m.Scale);
+            g.Restore(bayClip);
 
             AluSurface.DrawInnerShadowTop(g, bay, m.BayRadiusPx, AluPalette.RailInnerShadow, 5f * m.Scale);
 
@@ -40,7 +43,7 @@ namespace KeyboardLock.Alu
 
             AluSurface.DrawDropShadow(g, thumb, radius, AluPalette.ThumbShadow, 3f * m.Scale, 6f * m.Scale);
 
-            AluSurface.FillVerticalGradient(g, thumb, AluPalette.ThumbStops, AluPalette.ThumbPositions);
+            AluSurface.FillRoundedVerticalGradient(g, thumb, radius, AluPalette.ThumbStops, AluPalette.ThumbPositions);
 
             AluSurface.DrawInnerTopLight(g, thumb, radius, AluPalette.ThumbTopLight, 1.5f * m.Scale);
             AluSurface.DrawInnerBottomEdge(g, thumb, radius, AluPalette.ThumbInset, 3f * m.Scale);
@@ -55,7 +58,7 @@ namespace KeyboardLock.Alu
                 thumb.Width * 0.6f,
                 thumb.Height);
             AluText.Draw(g, "LOCK", fonts.ThumbLabel, AluPalette.ThumbText, label,
-                AluTextAlign.Left, 0f, AluPalette.ThumbTextShadow, 1f);
+                AluTextAlign.Left, 0f, AluPalette.ThumbTextShadow, 1f * m.Scale);
 
             // 右侧的防滑棱
             float ridgeWidth = 2f * m.Scale;

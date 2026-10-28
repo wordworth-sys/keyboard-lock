@@ -129,14 +129,8 @@ namespace KeyboardLock.Alu
 
             AluHitTarget target = renderer.HitTest(e.Location);
             AluHitTarget released = pressedTarget;
-            pressedTarget = AluHitTarget.None;
+            ClearPressedState();
             Capture = false;
-
-            if (renderer.PressMainButton)
-            {
-                renderer.PressMainButton = false;
-                Invalidate(renderer.MainButtonBounds);
-            }
 
             if (released == AluHitTarget.None || released != target)
                 return;
@@ -153,6 +147,25 @@ namespace KeyboardLock.Alu
                 case AluHitTarget.MainButton:
                     Raise(ToggleRequested);
                     break;
+            }
+        }
+
+        protected override void OnMouseCaptureChanged(EventArgs e)
+        {
+            base.OnMouseCaptureChanged(e);
+
+            // 按住鼠标期间被切走焦点（如快捷键切换置顶、Alt+Tab）导致失去捕获时，及时复位按下视觉态。
+            if (!Capture)
+                ClearPressedState();
+        }
+
+        private void ClearPressedState()
+        {
+            pressedTarget = AluHitTarget.None;
+            if (renderer.PressMainButton)
+            {
+                renderer.PressMainButton = false;
+                Invalidate(renderer.MainButtonBounds);
             }
         }
 
