@@ -55,7 +55,7 @@ namespace KeyboardLock.Alu
         /// <summary>主操作键区块（含投影外扩）的失效矩形。</summary>
         public Rectangle MainButtonBounds
         {
-            get { return Bounds(Metrics.MainSlot, 6f * Metrics.Scale); }
+            get { return Rectangle.Ceiling(MainSlotDirtyRect(Metrics)); }
         }
 
         /// <summary>绘制面板中与 clip 相交的部分。clip 取 PaintEventArgs.ClipRectangle。</summary>
@@ -103,7 +103,7 @@ namespace KeyboardLock.Alu
                     AluStatusPainter.Draw(g, m, fonts, State);
                 }
 
-                if (c.IntersectsWith(Inflate(m.MainSlot, 6f * m.Scale)))
+                if (c.IntersectsWith(MainSlotDirtyRect(m)))
                     AluMainButtonPainter.Draw(g, m, fonts, State, PressMainButton);
 
                 if (c.IntersectsWith(m.Footer))
@@ -158,6 +158,11 @@ namespace KeyboardLock.Alu
                 fonts.Dispose();
                 fonts = null;
             }
+        }
+
+        private static RectangleF MainSlotDirtyRect(AluMetrics m)
+        {
+            return Inflate(m.MainSlot, 6f * m.Scale);
         }
 
         private static RectangleF Inflate(RectangleF r, float by)

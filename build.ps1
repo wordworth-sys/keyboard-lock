@@ -24,7 +24,7 @@ $sources += @(Get-ChildItem -Path (Join-Path $root 'src\alu') -Filter '*.cs' -Fi
     "/win32manifest:$root\src\app.manifest" `
     "/out:$dist\KeyboardLock.exe" `
     /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll `
-    /warn:4 `
+    /warn:4 /warnaserror+ `
     $sources
 
 if ($LASTEXITCODE -ne 0) {

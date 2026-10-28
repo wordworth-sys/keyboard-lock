@@ -168,9 +168,17 @@ internal static class KeyFilterTests
                     .Up(0x0D /*Enter*/, P).Up(LSHIFT, P)
                     .Down(A, P).Up(A, P)),
 
-            Case("锁定时钩子安装前已按下的键：抬起照常吞掉", () =>
+            Case("锁定时钩子安装前已按下的键：修饰键抬起放行防卡键，普通键抬起照常吞掉", () =>
                 new Rig("pre-hook-up-locked", locked: true)
-                    .Up(0x0D /*Enter*/, B).Up(LSHIFT, B)),
+                    .Up(0x0D /*Enter*/, B).Up(0x20 /*Space*/, B)
+                    .Up(LSHIFT, P).Up(LCTRL, P).Up(LALT, P).Up(0x5B /*LWin*/, P)
+                    .AssertLocked(true)),
+
+            Case("锁定时从 UAC / 管理员窗口切回后松开残留按键：修饰键放行，普通键吞掉", () =>
+                new Rig("uac-return-up-locked", locked: true)
+                    .Up(RALT, P).Up(LCTRL, P, scan: SC_FAKE_LCTRL).Up(RCTRL, P).Up(0xA1 /*RShift*/, P).Up(0x5C /*RWin*/, P)
+                    .Up(A, B).Up(0x0D /*Enter*/, B)
+                    .AssertLocked(true)),
 
             Case("5 秒静默清掉 held 后解锁，此前被吞过 KEYDOWN 的键其抬起仍然吞掉（不漏孤立抬起）", () =>
                 new Rig("swallowed-survives-stale", locked: true)

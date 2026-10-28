@@ -96,60 +96,66 @@ namespace KeyboardLock.Alu
         }
 
         /// <summary>
-        /// 径向渐变：按半径分段由外向内叠画（LED 灯罩用）。
-        /// stops / positions 与 CSS radial-gradient 的写法一致。
+        /// 圆形/椭圆径向渐变（LED 灯珠用）：沿椭圆边界抗锯齿一次填充，焦点按 focus (0~1) 偏心定位，绝不溢出 r。
+        /// stops / positions 与 CSS radial-gradient 顺序一致（0 = 焦点核心，1 = 外缘）。
         /// </summary>
         public static void FillRadialGradient(Graphics g, RectangleF r, PointF focus, Color[] stops, float[] positions)
         {
-            const int Steps = 24;
-            float cx = r.Left + r.Width * focus.X;
-            float cy = r.Top + r.Height * focus.Y;
-            float rx = r.Width;
-            float ry = r.Height;
+            if (r.Width <= 0f || r.Height <= 0f || stops.Length == 0)
+                return;
+
+            if (stops.Length == 1)
+            {
+                using (SolidBrush b = new SolidBrush(stops[0]))
+                    g.FillEllipse(b, r);
+                return;
+            }
+
+            int n = stops.Length;
+            Color[] reversedColors = new Color[n];
+            float[] reversedPositions = new float[n];
+            // PathGradientBrush 的 ColorBlend 方向与 CSS 相反：0 = 外边界，1 = CenterPoint。
+            for (int i = 0; i < n; i++)
+            {
+                reversedColors[i] = stops[n - 1 - i];
+                reversedPositions[i] = 1f - positions[n - 1 - i];
+            }
+            reversedPositions[0] = 0f;
+            reversedPositions[n - 1] = 1f;
+
+            using (GraphicsPath path = new GraphicsPath())
+            {
+                path.AddEllipse(r);
+                using (PathGradientBrush brush = new PathGradientBrush(path))
+                {
+                    brush.CenterPoint = new PointF(r.Left + r.Width * focus.X, r.Top + r.Height * focus.Y);
+                    ColorBlend blend = new ColorBlend(n);
+                    blend.Colors = reversedColors;
+                    blend.Positions = reversedPositions;
+                    brush.InterpolationColors = blend;
+                    g.FillPath(brush, path);
+                }
+            }
+        }
+
+        /// <summary>椭圆径向高光（中心颜色向外缘渐隐，机身顶光与主按钮顶光共用）。</summary>
+        public static void FillRadialHighlight(Graphics g, float cx, float cy, float rx, float ry, Color centerColor, Color[] surround)
+        {
             if (rx <= 0f || ry <= 0f)
                 return;
 
-            // 由外圈画向圆心：内圈覆盖外圈，最终圆心为 stops[0]。一把画刷改色复用，不每步新建。
-            using (SolidBrush brush = new SolidBrush(Color.Black))
+            RectangleF ellipse = new RectangleF(cx - rx, cy - ry, rx * 2f, ry * 2f);
+            using (GraphicsPath path = new GraphicsPath())
             {
-                for (int i = 0; i < Steps; i++)
+                path.AddEllipse(ellipse);
+                using (PathGradientBrush brush = new PathGradientBrush(path))
                 {
-                    float t = 1f - (float)(i + 0.5) / Steps;          // 1 = 外缘，0 = 圆心
-                    brush.Color = Sample(stops, positions, t);
-                    g.FillEllipse(brush, cx - rx * t, cy - ry * t, rx * t * 2f, ry * t * 2f);
+                    brush.CenterPoint = new PointF(cx, cy);
+                    brush.CenterColor = centerColor;
+                    brush.SurroundColors = surround;
+                    g.FillEllipse(brush, ellipse);
                 }
             }
-        }
-
-        /// <summary>按位置采样一段渐变（positions 为 0~1 的相对位置）。</summary>
-        public static Color Sample(Color[] stops, float[] positions, float t)
-        {
-            if (stops.Length == 0)
-                return Color.Transparent;
-            if (t <= positions[0])
-                return stops[0];
-
-            for (int i = 0; i < stops.Length - 1; i++)
-            {
-                if (t <= positions[i + 1])
-                {
-                    float span = positions[i + 1] - positions[i];
-                    float k = span <= 0f ? 0f : (t - positions[i]) / span;
-                    return Blend(stops[i], stops[i + 1], k);
-                }
-            }
-
-            return stops[stops.Length - 1];
-        }
-
-        public static Color Blend(Color a, Color b, float k)
-        {
-            k = Math.Max(0f, Math.Min(1f, k));
-            return Color.FromArgb(
-                (int)Math.Round(a.A + (b.A - a.A) * k),
-                (int)Math.Round(a.R + (b.R - a.R) * k),
-                (int)Math.Round(a.G + (b.G - a.G) * k),
-                (int)Math.Round(a.B + (b.B - a.B) * k));
         }
 
         /// <summary>

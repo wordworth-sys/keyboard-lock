@@ -93,7 +93,7 @@ namespace KeyboardLock.Alu
             ThumbHold = Rect(73f, 61f, 120f, 66f, scale);
 
             LedBezel = Rect(217f, 85f, 18f, 18f, scale);
-            LedLens = Rect(219f, 87f, 12f, 12f, scale);
+            LedLens = Rect(220f, 88f, 12f, 12f, scale);
             StatusTextCn = Rect(248f, 78f, 120f, 19f, scale);
             StatusTextEn = Rect(248f, 97f, 120f, 12f, scale);
 

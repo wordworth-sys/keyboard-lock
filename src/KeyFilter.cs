@@ -17,8 +17,12 @@ internal sealed class KeyFilter
     public const int Block = 1;
     public const int ToggleLock = 2;
 
+    private const int VK_SHIFT = 0x10;
     private const int VK_CONTROL = 0x11;
     private const int VK_MENU = 0x12;
+    private const int VK_LWIN = 0x5B;
+    private const int VK_RWIN = 0x5C;
+    private const int VK_LSHIFT = 0xA0;
     private const int VK_LCONTROL = 0xA2;
     private const int VK_RCONTROL = 0xA3;
     private const int VK_LMENU = 0xA4;
@@ -81,9 +85,10 @@ internal sealed class KeyFilter
                 return Block;
             }
 
-            // 从未见过这个键的 KEYDOWN：它是在钩子装上之前就按着的。
-            // 未锁定时必须放行，否则系统会一直认为它处于按下状态（修饰键尤其致命）；锁定时照常吞掉。
-            return locked ? Block : Pass;
+            // 从未见过这个键的 KEYDOWN（钩子装上前就按着，或在 UAC / 管理员窗口内按下后切回普通窗口松开）：
+            // 修饰键的抬起一律放行，防止系统修饰键状态卡死导致鼠标变成 Shift+点击 / Ctrl+滚轮；
+            // 普通键仅在未锁定时放行，锁定时照常吞掉，避免孤立的 Enter / Space 抬起触发前台控件动作。
+            return (!locked || IsModifierSlot(slot)) ? Pass : Block;
         }
 
         if (Get(held, slot))
@@ -122,6 +127,15 @@ internal sealed class KeyFilter
     private bool IsAltHeld()
     {
         return Get(held, VK_LMENU) || Get(held, VK_RMENU) || Get(held, VK_MENU);
+    }
+
+    private static bool IsModifierSlot(int slot)
+    {
+        return (slot >= VK_LSHIFT && slot <= VK_RMENU)
+            || (slot >= VK_SHIFT && slot <= VK_MENU)
+            || slot == VK_LWIN
+            || slot == VK_RWIN
+            || slot == SlotAltGrFakeCtrl;
     }
 
     private static bool Get(uint[] bits, int i)

@@ -126,6 +126,18 @@ public class KeyboardLockForm : Form
         catch
         {
         }
+
+        try
+        {
+            using (Graphics g = Graphics.FromHwnd(IntPtr.Zero))
+            {
+                if (g.DpiX > 0f)
+                    return g.DpiX / 96f;
+            }
+        }
+        catch
+        {
+        }
         return 1f;
     }
 
@@ -248,7 +260,7 @@ public class KeyboardLockForm : Form
         if (e.Mode != PowerModes.Resume)
             return;
 
-        // SystemEvents 的回调线程不固定；重装钩子会阻塞至多 1 秒，统一封送到 UI 线程做。
+        // SystemEvents 的回调线程不固定；重装钩子需等待旧线程退出与新线程就绪，统一封送到 UI 线程做。
         PostToUiThread(ReinstallHook);
     }
 
@@ -257,6 +269,10 @@ public class KeyboardLockForm : Form
         int error;
         hookAvailable = KeyboardHook.Reinstall(out error);
         hookError = error;
+
+        // 重装失败时键盘实际已不受控，必须同步清掉锁定标志，避免标题/置顶残留及后续唤醒自动上锁。
+        if (!hookAvailable)
+            KeyboardHook.SetLocked(false);
 
         if (mnuToggle != null)
             mnuToggle.Enabled = hookAvailable;
@@ -277,7 +293,7 @@ public class KeyboardLockForm : Form
 
         UpdatePanelState();
 
-        // 开机时不该弹模态框：钩子失败只体现在托盘气泡提示上。
+        // 开机时不该弹模态框：钩子失败只体现在托盘悬停提示上。
     }
 
     /// <summary>强制创建窗口句柄（不会显示窗口）。</summary>
@@ -286,7 +302,7 @@ public class KeyboardLockForm : Form
         try
         {
             // 访问 Handle 才会真正建窗；句柄建不出来时只是钩子装不上，
-            // 不该在开机时抛异常弹崩溃框，托盘气泡会显示「钩子不可用」。
+            // 不该在开机时抛异常弹崩溃框，托盘悬停提示会显示「钩子不可用」。
             IntPtr handle = Handle;
             if (handle == IntPtr.Zero)
                 hookAvailable = false;

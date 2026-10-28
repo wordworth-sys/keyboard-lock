@@ -68,7 +68,14 @@ namespace KeyboardLock.Alu
 
             // 顶部高光椭圆上半截高出按钮顶边，必须裁在按钮圆角内，避免溢出到机身与凹槽模块。
             GraphicsState clip = AluSurface.ClipRounded(g, button, radius);
-            DrawTopHighlight(g, button, glowCenter, glowOuter, glowRadius);
+            AluSurface.FillRadialHighlight(
+                g,
+                button.Left + button.Width / 2f,
+                button.Top,
+                button.Width * glowRadius,
+                button.Height,
+                glowCenter,
+                glowOuter);
             g.Restore(clip);
 
             AluSurface.DrawInnerTopLight(g, button, radius, topLight, 1.5f * m.Scale);
@@ -76,28 +83,6 @@ namespace KeyboardLock.Alu
 
             using (Pen pen = new Pen(border, 1f))
                 AluSurface.DrawRounded(g, button, radius, pen);
-        }
-
-        /// <summary>按键顶部的椭圆高光（CSS radial-gradient 的近似）。</summary>
-        private static void DrawTopHighlight(Graphics g, RectangleF button, Color center, Color[] surround, float radiusFactor)
-        {
-            float cx = button.Left + button.Width / 2f;
-            float cy = button.Top;
-            float rx = button.Width * radiusFactor;
-            float ry = button.Height;
-            RectangleF ellipse = new RectangleF(cx - rx, cy - ry, rx * 2f, ry * 2f);
-
-            using (GraphicsPath path = new GraphicsPath())
-            {
-                path.AddEllipse(ellipse);
-                using (PathGradientBrush brush = new PathGradientBrush(path))
-                {
-                    brush.CenterPoint = new PointF(cx, cy);
-                    brush.CenterColor = center;
-                    brush.SurroundColors = surround;
-                    g.FillEllipse(brush, ellipse);
-                }
-            }
         }
     }
 }

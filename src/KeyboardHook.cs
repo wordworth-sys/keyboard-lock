@@ -110,7 +110,20 @@ internal static class KeyboardHook
         {
             win32Error = 0;
             if (thread != null)
-                return IsRunning;
+            {
+                if (IsRunning)
+                    return true;
+                if (!thread.IsAlive)
+                {
+                    thread = null;
+                    threadId = 0;
+                }
+                else
+                {
+                    win32Error = 1460; // ERROR_TIMEOUT：上一轮线程尚未退出
+                    return false;
+                }
+            }
 
             bool ok = false;
             int error = 0;
@@ -123,31 +136,33 @@ internal static class KeyboardHook
                 Thread t = new Thread(delegate()
                 {
                     MSG msg;
-                    threadId = GetCurrentThreadId();
+                    uint tid = GetCurrentThreadId();
                     // 先让系统为本线程建立消息队列，保证之后 PostThreadMessage(WM_QUIT) 一定能送达。
                     PeekMessage(out msg, IntPtr.Zero, 0, 0, PM_NOREMOVE);
 
-                    // filter 只归本线程所有：重装钩子时在这里清掉上一轮残留的"按住"状态。
-                    filter.ResetHeld();
-
                     IntPtr h = SetWindowsHookEx(WH_KEYBOARD_LL, hookProc, GetModuleHandle(null), 0);
-                    if (h == IntPtr.Zero)
-                        error = Marshal.GetLastWin32Error();
-                    else
-                        ok = true;
-
-                    Volatile.Write(ref hookId, h);
+                    int localError = h == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
 
                     if (Interlocked.CompareExchange(ref handshake, 1, 0) != 0)
                     {
-                        // 调用方已超时放弃：自己收尾，不留下无人管理的钩子。
+                        // 调用方已超时放弃：不触碰任何静态状态，自行卸载句柄收尾，避免污染后续新一轮钩子。
                         if (h != IntPtr.Zero)
-                        {
                             UnhookWindowsHookEx(h);
-                            Interlocked.CompareExchange(ref hookId, IntPtr.Zero, h);
-                        }
                         return;
                     }
+
+                    // 赢得握手后再发布线程 ID、重置状态机与钩子句柄。
+                    if (h != IntPtr.Zero)
+                    {
+                        threadId = tid;
+                        filter.ResetHeld();
+                        ok = true;
+                    }
+                    else
+                    {
+                        error = localError;
+                    }
+                    Volatile.Write(ref hookId, h);
 
                     try
                     {
@@ -155,7 +170,7 @@ internal static class KeyboardHook
                     }
                     catch (ObjectDisposedException)
                     {
-                        // 调用方刚好在握手成功后释放了事件：结果已经通过 handshake 交付，无需再通知。
+                        // 调用方在同步等待结束后释放了事件。
                     }
 
                     if (!ok)
@@ -168,21 +183,29 @@ internal static class KeyboardHook
                             filter.ResetHeld();
                     }
 
-                    UnhookWindowsHookEx(h);
-                    Interlocked.CompareExchange(ref hookId, IntPtr.Zero, h);
+                    IntPtr owned = Interlocked.CompareExchange(ref hookId, IntPtr.Zero, h);
+                    if (owned == h)
+                        UnhookWindowsHookEx(h);
                 });
                 t.Name = "KeyboardLock.Hook";
                 t.IsBackground = true;
                 t.Priority = ThreadPriority.Highest;
                 t.Start();
 
-                if (!ready.WaitOne(5000) && Interlocked.CompareExchange(ref handshake, 2, 0) == 0)
+                if (!ready.WaitOne(5000))
                 {
-                    // 线程 5 秒内没有上报：放弃它。线程之后完成安装时会看到 handshake == 2 并自行卸载。
-                    error = 1460; // ERROR_TIMEOUT
-                    ok = false;
+                    if (Interlocked.CompareExchange(ref handshake, 2, 0) == 0)
+                    {
+                        // 线程 5 秒内没有上报：放弃它。线程之后完成安装时会看到 handshake == 2 并自行卸载。
+                        error = 1460; // ERROR_TIMEOUT
+                        ok = false;
+                    }
+                    else
+                    {
+                        // 线程恰在超时瞬间赢得了握手（handshake == 1），等它把静态字段写完并 Set 即可。
+                        ready.WaitOne();
+                    }
                 }
-                // 若 CAS 失败说明线程恰在超时瞬间上报成功，ok / error / hookId 已就位，照常采用。
                 thread = ok ? t : null;
             }
 
@@ -209,11 +232,10 @@ internal static class KeyboardHook
     {
         lock (startStopLock)
         {
-            if (thread != null)
+            if (!StopThreadLocked())
             {
-                PostThreadMessage(threadId, WM_QUIT, IntPtr.Zero, IntPtr.Zero);
-                thread.Join(1000);
-                thread = null;
+                win32Error = 1460; // ERROR_TIMEOUT
+                return false;
             }
             return Start(out win32Error);
         }
@@ -225,13 +247,28 @@ internal static class KeyboardHook
         lock (startStopLock)
         {
             SetLocked(false);
-            if (thread == null)
-                return;
-
-            PostThreadMessage(threadId, WM_QUIT, IntPtr.Zero, IntPtr.Zero);
-            thread.Join(1000);
-            thread = null;
+            StopThreadLocked();
         }
+    }
+
+    /// <summary>通知当前钩子线程退出并等待其结束；若超时则保留线程引用（防止双线程并发访问 filter）并兜底卸载旧钩子句柄。</summary>
+    private static bool StopThreadLocked()
+    {
+        if (thread == null)
+            return true;
+
+        PostThreadMessage(threadId, WM_QUIT, IntPtr.Zero, IntPtr.Zero);
+        if (!thread.Join(1000))
+        {
+            IntPtr staleHook = Interlocked.Exchange(ref hookId, IntPtr.Zero);
+            if (staleHook != IntPtr.Zero)
+                UnhookWindowsHookEx(staleHook);
+            return false;
+        }
+
+        thread = null;
+        threadId = 0;
+        return true;
     }
 
     private static void RaiseHotkeyToggled()

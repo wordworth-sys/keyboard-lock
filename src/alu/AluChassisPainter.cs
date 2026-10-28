@@ -92,28 +92,9 @@ namespace KeyboardLock.Alu
             float ry = chassis.Height * 0.65f;
 
             // 68% 圈：中心 alpha .36 → 外缘 0
-            DrawRadialAlpha(g, cx, cy, rx * 0.68f, ry * 0.68f, 92, TopHighlightOuterSoft);
+            AluSurface.FillRadialHighlight(g, cx, cy, rx * 0.68f, ry * 0.68f, Color.FromArgb(92, 255, 255, 255), TopHighlightOuterSoft);
             // 38% 圈：中心 alpha .95 → 外缘 .36
-            DrawRadialAlpha(g, cx, cy, rx * 0.38f, ry * 0.38f, 242, TopHighlightOuterCore);
-        }
-
-        private static void DrawRadialAlpha(Graphics g, float cx, float cy, float rx, float ry, int centerAlpha, Color[] surround)
-        {
-            if (rx <= 0f || ry <= 0f)
-                return;
-
-            RectangleF ellipse = new RectangleF(cx - rx, cy - ry, rx * 2f, ry * 2f);
-            using (GraphicsPath path = new GraphicsPath())
-            {
-                path.AddEllipse(ellipse);
-                using (PathGradientBrush brush = new PathGradientBrush(path))
-                {
-                    brush.CenterPoint = new PointF(cx, cy);
-                    brush.CenterColor = Color.FromArgb(centerAlpha, 255, 255, 255);
-                    brush.SurroundColors = surround;
-                    g.FillEllipse(brush, ellipse);
-                }
-            }
+            AluSurface.FillRadialHighlight(g, cx, cy, rx * 0.38f, ry * 0.38f, Color.FromArgb(242, 255, 255, 255), TopHighlightOuterCore);
         }
 
         private static void DrawTitleBar(Graphics g, AluMetrics m)
